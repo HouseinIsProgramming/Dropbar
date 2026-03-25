@@ -3,39 +3,16 @@ import SwiftUI
 
 public class StatusBarController: NSObject {
     private let toggleItem: NSStatusItem
-    private let separatorItem: NSStatusItem
     private let scanner = MenuBarScanner()
     private let viewModel = DropbarViewModel()
     private var panel: DropbarPanel?
-    private var isCollapsed = false
     private var lastCloseTime = Date.distantPast
 
     public override init() {
-        let toggleName = "DropbarToggle"
-        let separatorName = "DropbarSep"
-
-        let posKey = "NSStatusItem Preferred Position"
-        if UserDefaults.standard.object(forKey: "\(posKey) \(toggleName)") == nil {
-            UserDefaults.standard.set(0, forKey: "\(posKey) \(toggleName)")
-        }
-        if UserDefaults.standard.object(forKey: "\(posKey) \(separatorName)") == nil {
-            UserDefaults.standard.set(1, forKey: "\(posKey) \(separatorName)")
-        }
-
         toggleItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        toggleItem.autosaveName = toggleName
-
-        separatorItem = NSStatusBar.system.statusItem(withLength: 0)
-        separatorItem.autosaveName = separatorName
-
+        toggleItem.autosaveName = "DropbarToggle"
         super.init()
         setupToggleItem()
-
-        if UserDefaults.standard.bool(forKey: "dropbar.collapsed") {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-                self?.initialCollapse()
-            }
-        }
     }
 
     private func setupToggleItem() {
@@ -63,64 +40,8 @@ public class StatusBarController: NSObject {
             return
         }
 
-        // Only scan when items are visible (not collapsed).
-        // If already collapsed, reuse cached viewModel data.
-        if !isCollapsed {
-            scanCaptureAndCollapse()
-        }
-
+        viewModel.items = scanner.scanAndCapture()
         showPanel()
-    }
-
-    // MARK: - Scan & Collapse
-
-    private var toggleX: CGFloat {
-        toggleItem.button?.window?.frame.origin.x ?? 0
-    }
-
-    /// Scan items while visible, capture images, mark hidden ones, collapse.
-    /// Called ONLY when items are currently visible in the menu bar.
-    private func scanCaptureAndCollapse() {
-        let tx = toggleX
-        let items = scanner.scanAndCapture()
-        viewModel.items = items
-
-        // First time: auto-detect items left of chevron as hidden
-        if viewModel.hiddenIDs.isEmpty {
-            let leftOfToggle = items.filter { $0.frame.maxX <= tx }
-            viewModel.hiddenIDs = Set(leftOfToggle.map(\.id))
-        } else {
-            // Prune IDs that no longer exist
-            let currentIDs = Set(items.map(\.id))
-            viewModel.hiddenIDs = viewModel.hiddenIDs.intersection(currentIDs)
-        }
-
-        collapse()
-    }
-
-    /// Auto-collapse on launch (items are visible, we scan and hide).
-    /// Guard: skip if already collapsed (user clicked before the 2s delay).
-    private func initialCollapse() {
-        guard !isCollapsed else { return }
-        let tx = toggleX
-        guard tx > 0 else { return }
-        let items = scanner.scanAndCapture()
-        viewModel.items = items
-        viewModel.hiddenIDs = Set(items.filter { $0.frame.maxX <= tx }.map(\.id))
-        collapse()
-    }
-
-    private func collapse() {
-        guard !viewModel.hiddenIDs.isEmpty else { return }
-        separatorItem.length = 10_000
-        isCollapsed = true
-        UserDefaults.standard.set(true, forKey: "dropbar.collapsed")
-    }
-
-    private func expand() {
-        separatorItem.length = 0
-        isCollapsed = false
-        UserDefaults.standard.set(false, forKey: "dropbar.collapsed")
     }
 
     // MARK: - Panel
@@ -145,19 +66,8 @@ public class StatusBarController: NSObject {
     // MARK: - Click-through
 
     private func handleItemClick(_ item: MenuBarItem) {
-        let wasHidden = viewModel.hiddenIDs.contains(item.id)
         panel?.dismiss()
-
-        if wasHidden {
-            // Must reveal to click — separator pushes hidden items off-screen
-            expand()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                self?.clickMenuItem(item)
-                // Items stay visible. Next chevron click re-scans and re-collapses.
-            }
-        } else {
-            clickMenuItem(item)
-        }
+        clickMenuItem(item)
     }
 
     private func clickMenuItem(_ item: MenuBarItem) {
@@ -208,9 +118,6 @@ public class StatusBarController: NSObject {
 
     private func showContextMenu() {
         let menu = NSMenu()
-        if isCollapsed {
-            menu.addItem(NSMenuItem(title: "Show All Items", action: #selector(showAllItems), keyEquivalent: ""))
-        }
         menu.addItem(NSMenuItem(title: "Quit Dropbar", action: #selector(quit), keyEquivalent: "q"))
         toggleItem.menu = menu
         toggleItem.button?.performClick(nil)
@@ -219,13 +126,7 @@ public class StatusBarController: NSObject {
         }
     }
 
-    @objc private func showAllItems() {
-        viewModel.hiddenIDs.removeAll()
-        expand()
-    }
-
     @objc private func quit() {
-        separatorItem.length = 0
         NSApp.terminate(nil)
     }
 }
