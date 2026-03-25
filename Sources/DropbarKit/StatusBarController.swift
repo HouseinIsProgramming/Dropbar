@@ -100,9 +100,9 @@ public class StatusBarController: NSObject {
                 if let image = item.image { self.imageCache[item.id] = image }
             }
 
-            // Auto-set hiddenIDs from position (items left of separator)
+            // Hidden = items left of separator. Only show those in the dropdown.
             self.viewModel.hiddenIDs = Set(leftItems.map(\.id))
-            self.viewModel.items = items.map { item in
+            self.viewModel.items = leftItems.map { item in
                 var copy = item
                 if copy.image == nil, let cached = self.imageCache[item.id] {
                     copy.image = cached
@@ -117,11 +117,31 @@ public class StatusBarController: NSObject {
     // MARK: - Collapse / Expand
 
     private func collapse() {
+        // Save toggle position BEFORE expansion pushes it
+        let savedToggleFrame = toggleItem.button?.window?.frame
+        let savedToggleAutosave = toggleItem.autosaveName as String
+
         print("[Dropbar] COLLAPSING separator")
         separatorItem.length = 10_000
         separatorItem.button?.title = ""
         isCollapsed = true
-        logPositions("AFTER_COLLAPSE")
+
+        // Restore toggle if it was pushed off-screen
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if let saved = savedToggleFrame,
+               let current = self.toggleItem.button?.window?.frame,
+               current.origin.x != saved.origin.x {
+                print("[Dropbar] toggle moved from x=\(saved.origin.x) to x=\(current.origin.x) — restoring")
+                self.toggleItem.button?.window?.setFrame(saved, display: true)
+            }
+            // Preserve autosave position so macOS remembers
+            let posKey = "NSStatusItem Preferred Position \(savedToggleAutosave)"
+            if let x = savedToggleFrame?.origin.x {
+                UserDefaults.standard.set(CGFloat(x), forKey: posKey)
+            }
+            self.logPositions("AFTER_COLLAPSE")
+        }
     }
 
     private func expand() {
