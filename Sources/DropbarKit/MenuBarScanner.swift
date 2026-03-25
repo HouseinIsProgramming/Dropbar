@@ -28,15 +28,11 @@ public class MenuBarScanner {
         }
     }
 
-    public func itemsLeftOf(x: CGFloat) -> [MenuBarItem] {
-        scanAndCapture().filter { $0.frame.maxX <= x }
-    }
-
-    /// Look up a specific window's frame in CGWindowList by its window ID.
-    /// This gives us the frame in Quartz coordinates — the same coordinate
-    /// space as all scanned items.
-    public func frameForWindow(id windowID: CGWindowID) -> CGRect? {
-        guard windowID != 0 else { return nil }
+    /// Get a window's CURRENT frame right before clicking (not cached).
+    /// Same approach as Ice's `getCurrentFrame` which calls
+    /// `Bridging.getWindowFrame(for:)` — we use CGWindowList instead
+    /// of the private CGSGetScreenRectForWindow.
+    public func currentFrame(for windowID: CGWindowID) -> CGRect? {
         guard let windowList = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly],
             kCGNullWindowID
@@ -66,8 +62,6 @@ public class MenuBarScanner {
             [.bestResolution, .boundsIgnoreFraming]
         ) else { return nil }
 
-        // Divide pixel dimensions by backing scale factor so the NSImage
-        // renders at the correct point size with crisp Retina resolution.
         let scale = NSScreen.main?.backingScaleFactor ?? 2.0
         let size = NSSize(
             width: CGFloat(cgImage.width) / scale,

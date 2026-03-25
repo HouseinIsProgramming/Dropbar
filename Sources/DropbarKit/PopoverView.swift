@@ -7,24 +7,20 @@ struct DropbarContentView: View {
     @State private var hoveredID: CGWindowID?
 
     var body: some View {
-        Group {
-            if items.isEmpty {
-                Text("No hidden items.\nCMD+drag menu bar icons left of │ to hide them.")
-                    .foregroundStyle(.secondary)
-                    .font(.system(size: 11))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: 220)
-            } else {
-                HStack(spacing: 0) {
-                    ForEach(items) { item in
-                        itemButton(item)
-                    }
+        if items.isEmpty {
+            Text("No menu bar items found.")
+                .foregroundStyle(.secondary)
+                .font(.system(size: 11))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+        } else {
+            HStack(spacing: 0) {
+                ForEach(items) { item in
+                    itemButton(item)
                 }
-                .padding(.horizontal, 4)
-                .padding(.vertical, 2)
             }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
         }
     }
 
