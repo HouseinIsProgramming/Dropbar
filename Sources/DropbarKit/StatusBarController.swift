@@ -7,6 +7,7 @@ public class StatusBarController: NSObject {
     private let scanner = MenuBarScanner()
     private var panel: DropbarPanel?
     private var lastCloseTime = Date.distantPast
+    private var separatorX: CGFloat = 0
 
     static let expandedLength: CGFloat = 10_000
 
@@ -16,8 +17,13 @@ public class StatusBarController: NSObject {
         super.init()
         setupSeparator()
         setupChevron()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            self?.expandSeparator()
+
+        // Briefly show collapsed to capture separator position, then expand
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.captureSeparatorPosition()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                self?.expand()
+            }
         }
     }
 
@@ -26,16 +32,7 @@ public class StatusBarController: NSObject {
     private func setupSeparator() {
         separatorItem.autosaveName = "Dropbar-Separator"
         guard let button = separatorItem.button else { return }
-        button.title = ""
-        let overlay = SeparatorOverlayView()
-        overlay.translatesAutoresizingMaskIntoConstraints = false
-        button.addSubview(overlay)
-        NSLayoutConstraint.activate([
-            overlay.topAnchor.constraint(equalTo: button.topAnchor),
-            overlay.bottomAnchor.constraint(equalTo: button.bottomAnchor),
-            overlay.leadingAnchor.constraint(equalTo: button.leadingAnchor),
-            overlay.trailingAnchor.constraint(equalTo: button.trailingAnchor),
-        ])
+        button.title = "│"
     }
 
     private func setupChevron() {
@@ -56,14 +53,22 @@ public class StatusBarController: NSObject {
         }
     }
 
-    // MARK: - Separator Expansion
+    // MARK: - Expand / Collapse
 
-    private func expandSeparator() {
+    private func expand() {
         separatorItem.length = Self.expandedLength
+        separatorItem.button?.title = ""
     }
 
-    private func collapseSeparator() {
+    private func collapse() {
         separatorItem.length = NSStatusItem.variableLength
+        separatorItem.button?.title = "│"
+    }
+
+    private func captureSeparatorPosition() {
+        if let window = separatorItem.button?.window {
+            separatorX = window.frame.origin.x
+        }
     }
 
     // MARK: - Dropdown
@@ -80,21 +85,20 @@ public class StatusBarController: NSObject {
     }
 
     private func showHiddenItems() {
-        collapseSeparator()
+        // Collapse so items slide on-screen for scanning
+        collapse()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             guard let self else { return }
 
-            guard let sepWindow = self.separatorItem.button?.window else {
-                self.expandSeparator()
-                return
-            }
+            // Capture fresh separator position
+            self.captureSeparatorPosition()
 
-            let separatorX = sepWindow.frame.origin.x
             let allItems = self.scanner.scanAndCapture()
-            let hidden = MenuBarScanner.hiddenItems(from: allItems, separatorX: separatorX)
+            let hidden = MenuBarScanner.hiddenItems(from: allItems, separatorX: self.separatorX)
 
-            self.expandSeparator()
+            // Re-expand to push items off
+            self.expand()
 
             guard !hidden.isEmpty else { return }
             self.showPanel(with: hidden)
@@ -125,12 +129,12 @@ public class StatusBarController: NSObject {
         panel?.dismiss()
 
         // Collapse so target slides on-screen, click it, then re-expand
-        collapseSeparator()
+        collapse()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             guard let self else { return }
             self.clickMenuItem(item)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.expandSeparator()
+                self?.expand()
             }
         }
     }
@@ -149,6 +153,7 @@ public class StatusBarController: NSObject {
             suppression.localEventsSuppressionInterval = 0
         }
 
+        // Fresh frame after collapse — item is on-screen now
         let frame = scanner.currentFrame(for: item.id) ?? item.frame
         let clickPoint = CGPoint(x: frame.midX, y: frame.midY)
 
@@ -171,10 +176,8 @@ public class StatusBarController: NSObject {
 
         let savedCursor = CGEvent(source: nil)?.location ?? .zero
         CGDisplayHideCursor(CGMainDisplayID())
-
         mouseDown.post(tap: .cgSessionEventTap)
         mouseUp.post(tap: .cgSessionEventTap)
-
         CGWarpMouseCursorPosition(savedCursor)
         CGDisplayShowCursor(CGMainDisplayID())
     }
@@ -193,30 +196,5 @@ public class StatusBarController: NSObject {
 
     @objc private func quit() {
         NSApp.terminate(nil)
-    }
-}
-
-// MARK: - Separator Overlay
-
-/// Draws │ pinned to the right edge of the button, regardless of width.
-/// When the separator expands to 10,000px, only the rightmost portion
-/// is on-screen — this ensures │ stays visible there.
-final class SeparatorOverlayView: NSView {
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        nil // pass all events through to the button (CMD+drag, clicks)
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let str = "│"
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.menuBarFont(ofSize: 0),
-            .foregroundColor: NSColor.controlTextColor,
-        ]
-        let size = str.size(withAttributes: attrs)
-        let point = NSPoint(
-            x: bounds.maxX - size.width - 2,
-            y: (bounds.height - size.height) / 2
-        )
-        str.draw(at: point, withAttributes: attrs)
     }
 }
