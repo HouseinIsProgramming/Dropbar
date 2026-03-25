@@ -13,18 +13,22 @@ func CGSSetWindowAlpha(
 ) -> CGError
 
 enum WindowBridging {
-    static func setAlpha(_ alpha: Float, for windowID: CGWindowID) {
+    static func setAlpha(_ alpha: Float, for windowID: CGWindowID) -> Bool {
         let result = CGSSetWindowAlpha(CGSMainConnectionID(), windowID, alpha)
-        if result != .success {
-            print("[Dropbar] CGSSetWindowAlpha(\(windowID), \(alpha)) failed: \(result.rawValue)")
+        let ok = result == .success
+        if !ok {
+            print("[Bridging] CGSSetWindowAlpha(wid=\(windowID), alpha=\(alpha)) FAILED: \(result.rawValue)")
         }
+        return ok
     }
 
-    static func hideWindow(_ windowID: CGWindowID) {
-        setAlpha(0.0, for: windowID)
+    static func hideWindow(_ windowID: CGWindowID) -> Bool {
+        print("[Bridging] hideWindow(\(windowID))")
+        return setAlpha(0.0, for: windowID)
     }
 
-    static func showWindow(_ windowID: CGWindowID) {
-        setAlpha(1.0, for: windowID)
+    static func showWindow(_ windowID: CGWindowID) -> Bool {
+        print("[Bridging] showWindow(\(windowID))")
+        return setAlpha(1.0, for: windowID)
     }
 }
