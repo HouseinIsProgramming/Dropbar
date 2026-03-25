@@ -2,6 +2,8 @@ import Cocoa
 
 public class MenuBarScanner {
     private let ownPID = ProcessInfo.processInfo.processIdentifier
+    static let excludedOwners: Set<String> = ["Window Server"]
+    static let maxStatusItemWidth: CGFloat = 200
 
     public init() {}
 
@@ -26,6 +28,10 @@ public class MenuBarScanner {
         }
     }
 
+    public func itemsLeftOf(x: CGFloat) -> [MenuBarItem] {
+        scanAndCapture().filter { $0.frame.maxX <= x }
+    }
+
     public func captureImage(for item: MenuBarItem) -> NSImage? {
         guard let cgImage = CGWindowListCreateImage(
             item.frame,
@@ -48,6 +54,10 @@ public class MenuBarScanner {
               let layer = info[kCGWindowLayer as String] as? Int
         else { return nil }
 
+        guard !Self.excludedOwners.contains(ownerName) else { return nil }
+        guard ownerPID != ownPID else { return nil }
+        guard layer == 25 else { return nil }
+
         let frame = CGRect(
             x: bounds["X"] ?? 0,
             y: bounds["Y"] ?? 0,
@@ -56,12 +66,11 @@ public class MenuBarScanner {
         )
 
         let menuBarHeight = NSStatusBar.system.thickness
-
-        guard layer == 25,
-              frame.origin.y == 0,
+        guard frame.origin.y == 0,
+              frame.height > 0,
               frame.height <= menuBarHeight + 10,
               frame.width > 0,
-              ownerPID != ownPID
+              frame.width < Self.maxStatusItemWidth
         else { return nil }
 
         return MenuBarItem(
