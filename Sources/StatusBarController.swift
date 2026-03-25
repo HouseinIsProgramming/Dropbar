@@ -2,11 +2,16 @@ import Cocoa
 
 class StatusBarController: NSObject {
     private let toggleItem: NSStatusItem
+    private let separatorItem: NSStatusItem
+    private var isCollapsed = false
+    private let hiddenWidth: CGFloat = 10000
 
     override init() {
         toggleItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        separatorItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         super.init()
         setupToggleItem()
+        setupSeparatorItem()
     }
 
     private func setupToggleItem() {
@@ -17,11 +22,37 @@ class StatusBarController: NSObject {
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
     }
 
+    private func setupSeparatorItem() {
+        guard let button = separatorItem.button else { return }
+        button.title = "│"
+        button.isEnabled = false
+    }
+
     @objc private func toggleClicked(_ sender: NSStatusBarButton) {
         guard let event = NSApp.currentEvent else { return }
         if event.type == .rightMouseUp {
             showContextMenu()
+        } else {
+            toggle()
         }
+    }
+
+    private func toggle() {
+        if isCollapsed {
+            expand()
+        } else {
+            collapse()
+        }
+    }
+
+    func collapse() {
+        separatorItem.length = hiddenWidth
+        isCollapsed = true
+    }
+
+    func expand() {
+        separatorItem.length = NSStatusItem.squareLength
+        isCollapsed = false
     }
 
     private func showContextMenu() {
