@@ -1,8 +1,12 @@
 import Cocoa
+import SwiftUI
 
 class StatusBarController: NSObject {
     private let toggleItem: NSStatusItem
     private let separatorItem: NSStatusItem
+    private let scanner = MenuBarScanner()
+    private var popover: NSPopover?
+    private var cachedItems: [MenuBarItem] = []
     private var isCollapsed = false
     private let hiddenWidth: CGFloat = 10000
 
@@ -33,24 +37,50 @@ class StatusBarController: NSObject {
         if event.type == .rightMouseUp {
             showContextMenu()
         } else {
-            toggle()
+            toggleDropdown()
         }
     }
 
-    private func toggle() {
-        if isCollapsed {
-            expand()
-        } else {
+    private func toggleDropdown() {
+        if let popover, popover.isShown {
+            popover.performClose(nil)
+            return
+        }
+
+        // Capture items while visible, then hide and show popover
+        if !isCollapsed {
+            cachedItems = scanner.scanAndCapture()
             collapse()
         }
+        showPopover()
     }
 
-    func collapse() {
+    private func showPopover() {
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = NSHostingController(
+            rootView: PopoverView(items: cachedItems) { [weak self] item in
+                self?.handleItemClick(item)
+            }
+        )
+
+        if let button = toggleItem.button {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
+        self.popover = popover
+    }
+
+    private func handleItemClick(_ item: MenuBarItem) {
+        popover?.performClose(nil)
+        expand()
+    }
+
+    private func collapse() {
         separatorItem.length = hiddenWidth
         isCollapsed = true
     }
 
-    func expand() {
+    private func expand() {
         separatorItem.length = NSStatusItem.squareLength
         isCollapsed = false
     }
