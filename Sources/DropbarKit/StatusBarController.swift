@@ -3,15 +3,30 @@ import SwiftUI
 
 public class StatusBarController: NSObject {
     private let toggleItem: NSStatusItem
+    private let separatorItem: NSStatusItem
     private let scanner = MenuBarScanner()
     private var panel: DropbarPanel?
+    private var cachedHiddenItems: [MenuBarItem] = []
+    private var isCollapsed = false
     private var lastCloseTime = Date.distantPast
+    private let hiddenWidth: CGFloat = 10000
 
     public override init() {
         toggleItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         toggleItem.autosaveName = "DropbarToggle"
+        // Invisible separator to the left of toggle. When expanded,
+        // pushes everything to its left off-screen.
+        separatorItem = NSStatusBar.system.statusItem(withLength: 0)
+        separatorItem.autosaveName = "DropbarSep"
         super.init()
         setupToggleItem()
+
+        // Restore collapsed state from previous session
+        if UserDefaults.standard.bool(forKey: "dropbar.collapsed") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                self?.captureAndCollapse()
+            }
+        }
     }
 
     private func setupToggleItem() {
@@ -39,43 +54,81 @@ public class StatusBarController: NSObject {
             return
         }
 
-        showPanel(with: scanner.scanAndCapture())
+        // If items are visible, capture those left of the toggle and hide them
+        if !isCollapsed {
+            captureAndCollapse()
+        }
+        showPanel()
+    }
+
+    // MARK: - Hide / Show
+
+    private var toggleX: CGFloat {
+        toggleItem.button?.window?.frame.origin.x ?? 0
+    }
+
+    private func captureAndCollapse() {
+        let tx = toggleX
+        guard tx > 0 else { return }
+        cachedHiddenItems = scanner.scanAndCapture().filter { $0.frame.maxX <= tx }
+        collapse()
+    }
+
+    private func collapse() {
+        separatorItem.length = hiddenWidth
+        isCollapsed = true
+        UserDefaults.standard.set(true, forKey: "dropbar.collapsed")
+    }
+
+    private func expand() {
+        separatorItem.length = 0
+        isCollapsed = false
+        UserDefaults.standard.set(false, forKey: "dropbar.collapsed")
     }
 
     // MARK: - Panel
 
-    private func showPanel(with items: [MenuBarItem]) {
+    private func showPanel() {
         guard let buttonWindow = toggleItem.button?.window else { return }
+
+        // Merge currently visible items with cached hidden items
+        let visibleItems = scanner.scanAndCapture()
+        let allItems = (cachedHiddenItems + visibleItems)
+            .sorted { $0.frame.origin.x < $1.frame.origin.x }
 
         let panel = DropbarPanel()
         panel.onClose = { [weak self] in
             self?.lastCloseTime = Date()
             self?.panel = nil
-
         }
 
-        let content = DropbarContentView(items: items) { [weak self] item in
+        let content = DropbarContentView(items: allItems) { [weak self] item in
             self?.handleItemClick(item)
         }
         panel.show(anchoredBelow: buttonWindow, content: content)
         self.panel = panel
-
     }
 
-    // MARK: - Click-through (Ice's approach)
+    // MARK: - Click-through
 
     private func handleItemClick(_ item: MenuBarItem) {
+        let wasHidden = cachedHiddenItems.contains(item)
         panel?.dismiss()
-        clickMenuItem(item)
+
+        if wasHidden {
+            // Reveal hidden items, wait for render, then click
+            expand()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                self?.clickMenuItem(item)
+            }
+        } else {
+            clickMenuItem(item)
+        }
     }
 
-    /// Posts targeted CGEvents to click a menu bar item, matching Ice's
-    /// `menuBarItemEvent` factory. Key fields route the event to the
-    /// correct process and window regardless of what's under the cursor.
     private func clickMenuItem(_ item: MenuBarItem) {
         guard let source = CGEventSource(stateID: .hidSystemState) else { return }
 
-        // Permit all events during suppression states (same as Ice)
         let permitAll: CGEventFilterMask = [.permitLocalMouseEvents, .permitLocalKeyboardEvents, .permitSystemDefinedEvents]
         if let suppression = CGEventSource(stateID: .combinedSessionState) {
             suppression.setLocalEventsFilterDuringSuppressionState(
@@ -87,7 +140,6 @@ public class StatusBarController: NSObject {
             suppression.localEventsSuppressionInterval = 0
         }
 
-        // Get FRESH frame right before clicking, not the cached one
         let frame = scanner.currentFrame(for: item.id) ?? item.frame
         let clickPoint = CGPoint(x: frame.midX, y: frame.midY)
 
@@ -108,7 +160,6 @@ public class StatusBarController: NSObject {
             }
         }
 
-        // Save cursor, hide, click, restore (Ice's pattern — no delays)
         let savedCursor = CGEvent(source: nil)?.location ?? .zero
         CGDisplayHideCursor(CGMainDisplayID())
 
@@ -132,6 +183,8 @@ public class StatusBarController: NSObject {
     }
 
     @objc private func quit() {
+        // Reveal hidden items before quitting so they're accessible
+        expand()
         NSApp.terminate(nil)
     }
 }
