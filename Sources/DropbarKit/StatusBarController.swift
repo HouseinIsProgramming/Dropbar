@@ -98,12 +98,12 @@ public class StatusBarController: NSObject, NSPopoverDelegate {
     private func clickThroughItem(_ item: MenuBarItem) {
         let current = scanner.scan()
 
-        // Match by window ID (stable across expand/collapse)
+        // Match by window ID first (stable across expand/collapse since the
+        // window persists, it just moves). Fall back to ownerName + closest X.
         let target: MenuBarItem?
         if let byID = current.first(where: { $0.id == item.id }) {
             target = byID
         } else {
-            // Fallback: same owner, closest X position
             let candidates = current.filter { $0.ownerName == item.ownerName }
             target = candidates.min(by: {
                 abs($0.frame.midX - item.frame.midX) < abs($1.frame.midX - item.frame.midX)
@@ -111,27 +111,50 @@ public class StatusBarController: NSObject, NSPopoverDelegate {
         }
 
         guard let target else { return }
-        postClick(at: CGPoint(x: target.frame.midX, y: target.frame.midY))
+        postTargetedClick(on: target)
     }
 
-    private func postClick(at point: CGPoint) {
-        let mouseDown = CGEvent(
-            mouseEventSource: nil,
-            mouseType: .leftMouseDown,
-            mouseCursorPosition: point,
-            mouseButton: .left
-        )
-        mouseDown?.post(tap: .cghidEventTap)
+    /// Posts a CGEvent click targeted at a specific menu bar item's window.
+    ///
+    /// Following Ice's approach: set the target PID, window ID, and private
+    /// window ID field (0x33) on the event so macOS routes it directly to the
+    /// owning process — no matter what's actually under the cursor.
+    private func postTargetedClick(on item: MenuBarItem) {
+        guard let source = CGEventSource(stateID: .hidSystemState) else { return }
 
-        // Stagger mouseUp so macOS registers it as a real click
+        let clickPoint = CGPoint(x: item.frame.midX, y: item.frame.midY)
+
+        guard let mouseDown = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: clickPoint, mouseButton: .left),
+              let mouseUp = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: clickPoint, mouseButton: .left)
+        else { return }
+
+        let pid = Int64(item.ownerPID)
+        let windowID = Int64(item.id)
+        // Private/undocumented CGEventField that Ice uses to target a specific window
+        guard let privateWindowIDField = CGEventField(rawValue: 0x33) else { return }
+
+        for event in [mouseDown, mouseUp] {
+            event.setIntegerValueField(.eventTargetUnixProcessID, value: pid)
+            event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: windowID)
+            event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: windowID)
+            event.setIntegerValueField(.mouseEventClickState, value: 1)
+            event.setIntegerValueField(privateWindowIDField, value: windowID)
+        }
+
+        // Save cursor position, hide it, click, then restore.
+        // CGEvent(source: nil)?.location gives current pos in Quartz coords.
+        let savedCursor = CGEvent(source: nil)?.location ?? .zero
+        CGDisplayHideCursor(CGMainDisplayID())
+
+        mouseDown.post(tap: .cgSessionEventTap)
+
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            let mouseUp = CGEvent(
-                mouseEventSource: nil,
-                mouseType: .leftMouseUp,
-                mouseCursorPosition: point,
-                mouseButton: .left
-            )
-            mouseUp?.post(tap: .cghidEventTap)
+            mouseUp.post(tap: .cgSessionEventTap)
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                CGWarpMouseCursorPosition(savedCursor)
+                CGDisplayShowCursor(CGMainDisplayID())
+            }
         }
     }
 
