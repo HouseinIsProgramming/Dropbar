@@ -3,16 +3,31 @@ import SwiftUI
 
 public class StatusBarController: NSObject {
     private let toggleItem: NSStatusItem
+    private let separatorItem: NSStatusItem
     private let scanner = MenuBarScanner()
     private let viewModel = DropbarViewModel()
     private var panel: DropbarPanel?
     private var lastCloseTime = Date.distantPast
+    private var isCollapsed = false
 
     public override init() {
+        // Create separator FIRST with variableLength so it gets a window.
+        // macOS places newer status items to the LEFT of existing ones,
+        // so separator (first) goes left, toggle (second) goes right.
+        separatorItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        separatorItem.autosaveName = "DropbarSep2"
+        separatorItem.button?.title = ""
+
         toggleItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        toggleItem.autosaveName = "DropbarToggle"
+        toggleItem.autosaveName = "DropbarToggle2"
+
         super.init()
         setupToggleItem()
+
+        // Verify positioning after a beat (windows need to materialize)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.verifyPositions()
+        }
     }
 
     private func setupToggleItem() {
@@ -21,6 +36,28 @@ public class StatusBarController: NSObject {
         button.target = self
         button.action = #selector(toggleClicked(_:))
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+    }
+
+    private func verifyPositions() {
+        guard let sepID = WindowBridging.getWindowID(for: separatorItem),
+              let toggleID = WindowBridging.getWindowID(for: toggleItem),
+              let sepFrame = WindowBridging.getWindowFrame(for: sepID),
+              let toggleFrame = WindowBridging.getWindowFrame(for: toggleID)
+        else {
+            print("[Dropbar] couldn't get window frames")
+            return
+        }
+        print("[Dropbar] separator: x=\(sepFrame.origin.x) w=\(sepFrame.width)")
+        print("[Dropbar] toggle: x=\(toggleFrame.origin.x) w=\(toggleFrame.width)")
+        if sepFrame.origin.x < toggleFrame.origin.x {
+            print("[Dropbar] ✓ separator is LEFT of toggle — hiding will work")
+        } else {
+            print("[Dropbar] ✗ separator is RIGHT of toggle — swapping needed")
+            // Remove both and recreate in opposite order
+            NSStatusBar.system.removeStatusItem(separatorItem)
+            NSStatusBar.system.removeStatusItem(toggleItem)
+            // Note: this would require re-init, so for now just warn
+        }
     }
 
     @objc private func toggleClicked(_ sender: NSStatusBarButton) {
@@ -40,17 +77,45 @@ public class StatusBarController: NSObject {
             return
         }
 
-        viewModel.items = scanner.scanAndCapture()
-        showPanel()
+        // Expand separator to show all items for scanning
+        if isCollapsed {
+            separatorItem.length = NSStatusItem.variableLength
+            isCollapsed = false
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            guard let self else { return }
+            self.viewModel.items = self.scanner.scanAndCapture()
+
+            // Prune stale IDs
+            let currentIDs = Set(self.viewModel.items.map(\.id))
+            self.viewModel.hiddenIDs = self.viewModel.hiddenIDs.intersection(currentIDs)
+
+            // Re-collapse if there are hidden items
+            if !self.viewModel.hiddenIDs.isEmpty {
+                self.separatorItem.length = 10_000
+                self.isCollapsed = true
+            }
+
+            self.showPanel()
+        }
     }
+
+    // MARK: - Panel
 
     private func showPanel() {
         guard let buttonWindow = toggleItem.button?.window else { return }
 
         let panel = DropbarPanel()
         panel.onClose = { [weak self] in
-            self?.lastCloseTime = Date()
-            self?.panel = nil
+            guard let self else { return }
+            self.lastCloseTime = Date()
+            self.panel = nil
+            // Re-collapse when panel closes
+            if !self.viewModel.hiddenIDs.isEmpty && !self.isCollapsed {
+                self.separatorItem.length = 10_000
+                self.isCollapsed = true
+            }
         }
 
         let content = DropbarContentView(
@@ -61,9 +126,20 @@ public class StatusBarController: NSObject {
         self.panel = panel
     }
 
+    // MARK: - Click-through
+
     private func handleItemClick(_ item: MenuBarItem) {
         panel?.dismiss()
-        clickMenuItem(item)
+
+        if viewModel.hiddenIDs.contains(item.id) {
+            separatorItem.length = NSStatusItem.variableLength
+            isCollapsed = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                self?.clickMenuItem(item)
+            }
+        } else {
+            clickMenuItem(item)
+        }
     }
 
     private func clickMenuItem(_ item: MenuBarItem) {
@@ -80,7 +156,14 @@ public class StatusBarController: NSObject {
             suppression.localEventsSuppressionInterval = 0
         }
 
-        let frame = scanner.currentFrame(for: item.id) ?? item.frame
+        // Use private API for accurate frame (works even for off-screen items)
+        let frame: CGRect
+        if let wid = viewModel.items.first(where: { $0.id == item.id })?.id,
+           let f = WindowBridging.getWindowFrame(for: wid) {
+            frame = f
+        } else {
+            frame = scanner.currentFrame(for: item.id) ?? item.frame
+        }
         let clickPoint = CGPoint(x: frame.midX, y: frame.midY)
 
         guard let mouseDown = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: clickPoint, mouseButton: .left),
@@ -110,8 +193,13 @@ public class StatusBarController: NSObject {
         CGDisplayShowCursor(CGMainDisplayID())
     }
 
+    // MARK: - Context Menu
+
     private func showContextMenu() {
         let menu = NSMenu()
+        if !viewModel.hiddenIDs.isEmpty {
+            menu.addItem(NSMenuItem(title: "Show All Items", action: #selector(showAllItems), keyEquivalent: ""))
+        }
         menu.addItem(NSMenuItem(title: "Quit Dropbar", action: #selector(quit), keyEquivalent: "q"))
         toggleItem.menu = menu
         toggleItem.button?.performClick(nil)
@@ -120,7 +208,14 @@ public class StatusBarController: NSObject {
         }
     }
 
+    @objc private func showAllItems() {
+        viewModel.hiddenIDs.removeAll()
+        separatorItem.length = NSStatusItem.variableLength
+        isCollapsed = false
+    }
+
     @objc private func quit() {
+        separatorItem.length = NSStatusItem.variableLength
         NSApp.terminate(nil)
     }
 }
