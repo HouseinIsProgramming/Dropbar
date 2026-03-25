@@ -99,7 +99,9 @@ public class StatusBarController: NSObject {
     }
 
     /// Auto-collapse on launch (items are visible, we scan and hide).
+    /// Guard: skip if already collapsed (user clicked before the 2s delay).
     private func initialCollapse() {
+        guard !isCollapsed else { return }
         let tx = toggleX
         guard tx > 0 else { return }
         let items = scanner.scanAndCapture()
