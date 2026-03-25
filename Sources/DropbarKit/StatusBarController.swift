@@ -61,15 +61,15 @@ public class StatusBarController: NSObject {
         if !isCollapsed {
             // Get separator's window ID from AppKit, then look up its
             // CGWindowList frame (same coordinate space as scanned items).
-            let windowNumber = separatorItem.button?.window?.windowNumber ?? 0
             let sepX: CGFloat
-            if windowNumber > 0 {
-                sepX = scanner.frameForWindow(id: CGWindowID(windowNumber))?.origin.x ?? 0
+            if let wn = separatorItem.button?.window?.windowNumber,
+               let wid = UInt32(exactly: wn) {
+                sepX = scanner.frameForWindow(id: CGWindowID(wid))?.origin.x ?? 0
             } else {
                 sepX = separatorItem.button?.window?.frame.origin.x ?? 0
             }
             cachedItems = scanner.itemsLeftOf(x: sepX)
-            print("[Dropbar] sep windowNumber=\(windowNumber) sepX=\(sepX) found=\(cachedItems.count) items")
+            print("[Dropbar] sepX=\(sepX) found=\(cachedItems.count) items")
             collapse()
         }
         showPanel()
