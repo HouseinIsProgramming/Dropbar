@@ -1,14 +1,10 @@
 import SwiftUI
 
-struct PopoverView: View {
+struct DropbarContentView: View {
     let items: [MenuBarItem]
     let onItemClicked: (MenuBarItem) -> Void
 
     @State private var hoveredID: CGWindowID?
-
-    private var menuBarHeight: CGFloat {
-        NSStatusBar.system.thickness
-    }
 
     var body: some View {
         Group {
@@ -26,7 +22,7 @@ struct PopoverView: View {
                         itemButton(item)
                     }
                 }
-                .padding(.horizontal, 2)
+                .padding(.horizontal, 4)
                 .padding(.vertical, 2)
             }
         }
@@ -39,15 +35,12 @@ struct PopoverView: View {
         } label: {
             Group {
                 if let image = item.image {
-                    // Render at the image's natural point size (= menu bar size).
-                    // The NSImage was created with size = pixels / scaleFactor,
-                    // so it already has the correct dimensions.
                     Image(nsImage: image)
                         .interpolation(.high)
                 } else {
                     Image(systemName: "questionmark.square")
                         .font(.system(size: 16))
-                        .frame(width: 24, height: menuBarHeight)
+                        .frame(width: 24, height: NSStatusBar.system.thickness)
                 }
             }
             .padding(.horizontal, 2)

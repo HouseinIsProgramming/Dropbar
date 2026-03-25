@@ -1,14 +1,15 @@
 import Cocoa
 import SwiftUI
 
-public class StatusBarController: NSObject, NSPopoverDelegate {
+public class StatusBarController: NSObject {
     private let toggleItem: NSStatusItem
     private let separatorItem: NSStatusItem
     private let scanner = MenuBarScanner()
-    private var popover: NSPopover?
+    private var panel: DropbarPanel?
     private var cachedItems: [MenuBarItem] = []
-    private(set) var isCollapsed = false
+    private var isCollapsed = false
     private var isHandlingClick = false
+    private var lastCloseTime = Date.distantPast
     private let hiddenWidth: CGFloat = 10000
 
     public override init() {
@@ -34,10 +35,6 @@ public class StatusBarController: NSObject, NSPopoverDelegate {
         button.title = "│"
     }
 
-    var separatorX: CGFloat {
-        separatorItem.button?.window?.frame.origin.x ?? 0
-    }
-
     // MARK: - Toggle
 
     @objc private func toggleClicked(_ sender: NSStatusBarButton) {
@@ -50,44 +47,59 @@ public class StatusBarController: NSObject, NSPopoverDelegate {
     }
 
     private func toggleDropdown() {
-        if let popover, popover.isShown {
-            popover.performClose(nil)
+        // Debounce: if the panel was just closed by clicking outside,
+        // the toggle action fires right after. Don't reopen.
+        if Date().timeIntervalSince(lastCloseTime) < 0.3 {
+            return
+        }
+
+        if let panel, panel.isVisible {
+            closePanel()
             return
         }
 
         if !isCollapsed {
-            cachedItems = scanner.itemsLeftOf(x: separatorX)
+            // Use CGWindowList coords for separator position (same space as items)
+            let sepX = scanner.separatorFrame()?.origin.x ?? 0
+            cachedItems = scanner.itemsLeftOf(x: sepX)
             collapse()
         }
-        showPopover()
+        showPanel()
     }
 
-    // MARK: - Popover
+    // MARK: - Panel
 
-    private func showPopover() {
-        let popover = NSPopover()
-        popover.behavior = .transient
-        popover.delegate = self
-        popover.contentViewController = NSHostingController(
-            rootView: PopoverView(items: cachedItems) { [weak self] item in
-                self?.handleItemClick(item)
+    private func showPanel() {
+        guard let buttonWindow = toggleItem.button?.window else { return }
+
+        let panel = DropbarPanel()
+        panel.onClose = { [weak self] in
+            guard let self else { return }
+            self.lastCloseTime = Date()
+            self.panel = nil
+            if self.isCollapsed && !self.isHandlingClick {
+                self.expand()
             }
-        )
-
-        if let button = toggleItem.button {
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }
-        self.popover = popover
+
+        let content = DropbarContentView(items: cachedItems) { [weak self] item in
+            self?.handleItemClick(item)
+        }
+        panel.show(anchoredBelow: buttonWindow, content: content)
+        self.panel = panel
+    }
+
+    private func closePanel() {
+        panel?.dismiss()
     }
 
     // MARK: - Click-through
 
     private func handleItemClick(_ item: MenuBarItem) {
         isHandlingClick = true
-        popover?.performClose(nil)
+        closePanel()
         expand()
 
-        // Wait for the menu bar to re-render revealed items, then click
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let self else { return }
             self.clickThroughItem(item)
@@ -98,8 +110,6 @@ public class StatusBarController: NSObject, NSPopoverDelegate {
     private func clickThroughItem(_ item: MenuBarItem) {
         let current = scanner.scan()
 
-        // Match by window ID first (stable across expand/collapse since the
-        // window persists, it just moves). Fall back to ownerName + closest X.
         let target: MenuBarItem?
         if let byID = current.first(where: { $0.id == item.id }) {
             target = byID
@@ -114,11 +124,6 @@ public class StatusBarController: NSObject, NSPopoverDelegate {
         postTargetedClick(on: target)
     }
 
-    /// Posts a CGEvent click targeted at a specific menu bar item's window.
-    ///
-    /// Following Ice's approach: set the target PID, window ID, and private
-    /// window ID field (0x33) on the event so macOS routes it directly to the
-    /// owning process — no matter what's actually under the cursor.
     private func postTargetedClick(on item: MenuBarItem) {
         guard let source = CGEventSource(stateID: .hidSystemState) else { return }
 
@@ -130,7 +135,6 @@ public class StatusBarController: NSObject, NSPopoverDelegate {
 
         let pid = Int64(item.ownerPID)
         let windowID = Int64(item.id)
-        // Private/undocumented CGEventField that Ice uses to target a specific window
         guard let privateWindowIDField = CGEventField(rawValue: 0x33) else { return }
 
         for event in [mouseDown, mouseUp] {
@@ -141,8 +145,6 @@ public class StatusBarController: NSObject, NSPopoverDelegate {
             event.setIntegerValueField(privateWindowIDField, value: windowID)
         }
 
-        // Save cursor position, hide it, click, then restore.
-        // CGEvent(source: nil)?.location gives current pos in Quartz coords.
         let savedCursor = CGEvent(source: nil)?.location ?? .zero
         CGDisplayHideCursor(CGMainDisplayID())
 
@@ -168,14 +170,6 @@ public class StatusBarController: NSObject, NSPopoverDelegate {
     private func expand() {
         separatorItem.length = NSStatusItem.squareLength
         isCollapsed = false
-    }
-
-    // MARK: - NSPopoverDelegate
-
-    public func popoverDidClose(_ notification: Notification) {
-        if isCollapsed && !isHandlingClick {
-            expand()
-        }
     }
 
     // MARK: - Context Menu
