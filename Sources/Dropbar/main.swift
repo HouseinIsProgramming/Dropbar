@@ -1,4 +1,5 @@
 import Cocoa
+import DropbarKit
 
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)

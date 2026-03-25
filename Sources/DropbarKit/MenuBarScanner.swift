@@ -1,9 +1,11 @@
 import Cocoa
 
-class MenuBarScanner {
+public class MenuBarScanner {
     private let ownPID = ProcessInfo.processInfo.processIdentifier
 
-    func scan() -> [MenuBarItem] {
+    public init() {}
+
+    public func scan() -> [MenuBarItem] {
         guard let windowList = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly],
             kCGNullWindowID
@@ -16,30 +18,29 @@ class MenuBarScanner {
             .sorted { $0.frame.origin.x < $1.frame.origin.x }
     }
 
-    func scanAndCapture() -> [MenuBarItem] {
-        var items = scan()
-        for i in items.indices {
-            items[i].image = captureImage(for: items[i])
+    public func scanAndCapture() -> [MenuBarItem] {
+        scan().map { item in
+            var captured = item
+            captured.image = captureImage(for: item)
+            return captured
         }
-        return items
     }
 
-    func captureImage(for item: MenuBarItem) -> NSImage? {
+    public func captureImage(for item: MenuBarItem) -> NSImage? {
         guard let cgImage = CGWindowListCreateImage(
             item.frame,
             .optionIncludingWindow,
             item.id,
             [.bestResolution, .boundsIgnoreFraming]
-        ) else {
-            return nil
-        }
+        ) else { return nil }
+
         return NSImage(
             cgImage: cgImage,
             size: NSSize(width: item.frame.width, height: item.frame.height)
         )
     }
 
-    private func parseWindow(_ info: [String: Any]) -> MenuBarItem? {
+    func parseWindow(_ info: [String: Any]) -> MenuBarItem? {
         guard let windowID = info[kCGWindowNumber as String] as? CGWindowID,
               let ownerName = info[kCGWindowOwnerName as String] as? String,
               let ownerPID = info[kCGWindowOwnerPID as String] as? Int32,

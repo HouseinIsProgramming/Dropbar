@@ -1,7 +1,7 @@
 import Cocoa
 import SwiftUI
 
-class StatusBarController: NSObject {
+public class StatusBarController: NSObject {
     private let toggleItem: NSStatusItem
     private let separatorItem: NSStatusItem
     private let scanner = MenuBarScanner()
@@ -10,7 +10,7 @@ class StatusBarController: NSObject {
     private var isCollapsed = false
     private let hiddenWidth: CGFloat = 10000
 
-    override init() {
+    public override init() {
         toggleItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         separatorItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         super.init()
@@ -47,7 +47,6 @@ class StatusBarController: NSObject {
             return
         }
 
-        // Capture items while visible, then hide and show popover
         if !isCollapsed {
             cachedItems = scanner.scanAndCapture()
             collapse()
@@ -72,8 +71,6 @@ class StatusBarController: NSObject {
 
     private func handleItemClick(_ item: MenuBarItem) {
         popover?.performClose(nil)
-
-        // Reveal items, wait for them to render, then click the target
         expand()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             self.clickThroughItem(item)
@@ -81,7 +78,6 @@ class StatusBarController: NSObject {
     }
 
     private func clickThroughItem(_ item: MenuBarItem) {
-        // Re-scan to get the updated frame (position may shift after reveal)
         let currentItems = scanner.scan()
         let target = currentItems.first { $0.ownerName == item.ownerName }
         let clickPoint = CGPoint(
