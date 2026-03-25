@@ -40,10 +40,14 @@ public class MenuBarScanner {
             [.bestResolution, .boundsIgnoreFraming]
         ) else { return nil }
 
-        return NSImage(
-            cgImage: cgImage,
-            size: NSSize(width: item.frame.width, height: item.frame.height)
+        // Divide pixel dimensions by backing scale factor so the NSImage
+        // renders at the correct point size with crisp Retina resolution.
+        let scale = NSScreen.main?.backingScaleFactor ?? 2.0
+        let size = NSSize(
+            width: CGFloat(cgImage.width) / scale,
+            height: CGFloat(cgImage.height) / scale
         )
+        return NSImage(cgImage: cgImage, size: size)
     }
 
     func parseWindow(_ info: [String: Any]) -> MenuBarItem? {
