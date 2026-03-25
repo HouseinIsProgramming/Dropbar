@@ -14,10 +14,10 @@ public class StatusBarController: NSObject {
     public override init() {
         toggleItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         toggleItem.autosaveName = "DropbarToggle"
-        // Invisible separator to the left of toggle. When expanded,
+        // Thin separator to the left of toggle. Needs non-zero length
+        // to have a window in the menu bar. When expanded to 10000,
         // pushes everything to its left off-screen.
-        separatorItem = NSStatusBar.system.statusItem(withLength: 0)
-        separatorItem.autosaveName = "DropbarSep"
+        separatorItem = NSStatusBar.system.statusItem(withLength: 1)
         super.init()
         setupToggleItem()
 
@@ -81,7 +81,7 @@ public class StatusBarController: NSObject {
     }
 
     private func expand() {
-        separatorItem.length = 0
+        separatorItem.length = 1
         isCollapsed = false
         UserDefaults.standard.set(false, forKey: "dropbar.collapsed")
     }
