@@ -39,12 +39,26 @@ public class StatusBarController: NSObject {
     }
 
     private func verifyPositions() {
+        let sepWN = separatorItem.button?.window?.windowNumber
+        let toggleWN = toggleItem.button?.window?.windowNumber
+        print("[Dropbar] raw window numbers: sep=\(sepWN as Any) toggle=\(toggleWN as Any)")
+        print("[Dropbar] sep button=\(separatorItem.button as Any) window=\(separatorItem.button?.window as Any)")
+
         guard let sepID = WindowBridging.getWindowID(for: separatorItem),
-              let toggleID = WindowBridging.getWindowID(for: toggleItem),
-              let sepFrame = WindowBridging.getWindowFrame(for: sepID),
+              let toggleID = WindowBridging.getWindowID(for: toggleItem)
+        else {
+            print("[Dropbar] couldn't convert window IDs")
+            // Fall back to AppKit frames
+            let sepX = separatorItem.button?.window?.frame.origin.x ?? -1
+            let toggleX = toggleItem.button?.window?.frame.origin.x ?? -1
+            print("[Dropbar] AppKit frames: sep=\(sepX) toggle=\(toggleX)")
+            return
+        }
+
+        guard let sepFrame = WindowBridging.getWindowFrame(for: sepID),
               let toggleFrame = WindowBridging.getWindowFrame(for: toggleID)
         else {
-            print("[Dropbar] couldn't get window frames")
+            print("[Dropbar] CGSGetScreenRectForWindow failed for sep=\(sepID) toggle=\(toggleID)")
             return
         }
         print("[Dropbar] separator: x=\(sepFrame.origin.x) w=\(sepFrame.width)")
