@@ -32,21 +32,21 @@ public class MenuBarScanner {
         scanAndCapture().filter { $0.frame.maxX <= x }
     }
 
-    /// Find the separator's frame using CGWindowList (same coordinate space
-    /// as scanned items). Returns the leftmost of our own menu bar windows.
-    public func separatorFrame() -> CGRect? {
+    /// Look up a specific window's frame in CGWindowList by its window ID.
+    /// This gives us the frame in Quartz coordinates — the same coordinate
+    /// space as all scanned items.
+    public func frameForWindow(id windowID: CGWindowID) -> CGRect? {
+        guard windowID != 0 else { return nil }
         guard let windowList = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly],
             kCGNullWindowID
         ) as? [[String: Any]] else { return nil }
 
-        let ownWindows: [CGRect] = windowList.compactMap { info in
-            guard let ownerPID = info[kCGWindowOwnerPID as String] as? Int32,
-                  let bounds = info[kCGWindowBounds as String] as? [String: CGFloat],
-                  let layer = info[kCGWindowLayer as String] as? Int,
-                  ownerPID == ownPID,
-                  layer == 25
-            else { return nil }
+        for info in windowList {
+            guard let wID = info[kCGWindowNumber as String] as? CGWindowID,
+                  wID == windowID,
+                  let bounds = info[kCGWindowBounds as String] as? [String: CGFloat]
+            else { continue }
 
             return CGRect(
                 x: bounds["X"] ?? 0,
@@ -55,9 +55,7 @@ public class MenuBarScanner {
                 height: bounds["Height"] ?? 0
             )
         }
-
-        // Separator is the leftmost of our two menu bar windows
-        return ownWindows.min(by: { $0.origin.x < $1.origin.x })
+        return nil
     }
 
     public func captureImage(for item: MenuBarItem) -> NSImage? {
