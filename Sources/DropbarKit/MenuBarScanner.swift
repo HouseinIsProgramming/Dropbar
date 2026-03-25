@@ -7,6 +7,11 @@ public class MenuBarScanner {
 
     public init() {}
 
+    /// Items whose right edge is fully left of the separator position.
+    public static func hiddenItems(from items: [MenuBarItem], separatorX: CGFloat) -> [MenuBarItem] {
+        items.filter { $0.frame.maxX <= separatorX }
+    }
+
     public func scan() -> [MenuBarItem] {
         guard let windowList = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly],

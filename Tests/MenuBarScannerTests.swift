@@ -112,8 +112,7 @@ final class MenuBarScannerTests: XCTestCase {
             MenuBarItem(id: 3, ownerName: "C", ownerPID: 3, frame: CGRect(x: 250, y: 0, width: 30, height: 24)),
         ]
 
-        let separatorX: CGFloat = 200
-        let hidden = items.filter { $0.frame.maxX <= separatorX }
+        let hidden = MenuBarScanner.hiddenItems(from: items, separatorX: 200)
 
         XCTAssertEqual(hidden.count, 2)
         XCTAssertEqual(hidden[0].ownerName, "A")
@@ -125,8 +124,7 @@ final class MenuBarScannerTests: XCTestCase {
             MenuBarItem(id: 1, ownerName: "A", ownerPID: 1, frame: CGRect(x: 190, y: 0, width: 30, height: 24)),
         ]
 
-        let separatorX: CGFloat = 200
-        let hidden = items.filter { $0.frame.maxX <= separatorX }
+        let hidden = MenuBarScanner.hiddenItems(from: items, separatorX: 200)
 
         XCTAssertEqual(hidden.count, 0, "item overlapping separator should not be hidden")
     }

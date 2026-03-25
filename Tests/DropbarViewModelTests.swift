@@ -1,63 +1,83 @@
 import XCTest
 @testable import DropbarKit
 
-final class DropbarViewModelTests: XCTestCase {
-    private var vm: DropbarViewModel!
+final class SeparatorFilteringTests: XCTestCase {
 
-    override func setUp() {
-        vm = DropbarViewModel()
-        vm.items = [
-            MenuBarItem(id: 1, ownerName: "A", ownerPID: 1, frame: CGRect(x: 100, y: 0, width: 30, height: 24)),
-            MenuBarItem(id: 2, ownerName: "B", ownerPID: 2, frame: CGRect(x: 200, y: 0, width: 30, height: 24)),
-            MenuBarItem(id: 3, ownerName: "C", ownerPID: 3, frame: CGRect(x: 300, y: 0, width: 30, height: 24)),
+    // MARK: - hiddenItems(from:separatorX:)
+
+    func testItemsFullyLeftOfSeparatorAreHidden() {
+        let items = [
+            MenuBarItem(id: 1, ownerName: "A", ownerPID: 1, frame: CGRect(x: 50, y: 0, width: 30, height: 24)),
+            MenuBarItem(id: 2, ownerName: "B", ownerPID: 2, frame: CGRect(x: 150, y: 0, width: 30, height: 24)),
+            MenuBarItem(id: 3, ownerName: "C", ownerPID: 3, frame: CGRect(x: 250, y: 0, width: 30, height: 24)),
         ]
+        let hidden = MenuBarScanner.hiddenItems(from: items, separatorX: 200)
+
+        XCTAssertEqual(hidden.count, 2)
+        XCTAssertEqual(hidden[0].ownerName, "A")
+        XCTAssertEqual(hidden[1].ownerName, "B")
     }
 
-    func testInitiallyNoHiddenItems() {
-        XCTAssertTrue(vm.hiddenIDs.isEmpty)
-        XCTAssertEqual(vm.hiddenItems.count, 0)
-        XCTAssertEqual(vm.visibleItems.count, 3)
+    func testItemOverlappingSeparatorIsNotHidden() {
+        let items = [
+            MenuBarItem(id: 1, ownerName: "A", ownerPID: 1, frame: CGRect(x: 190, y: 0, width: 30, height: 24)),
+        ]
+        let hidden = MenuBarScanner.hiddenItems(from: items, separatorX: 200)
+
+        XCTAssertEqual(hidden.count, 0, "item straddling separator should stay visible")
     }
 
-    func testToggleHidesItem() {
-        vm.toggleHidden(vm.items[0])
+    func testItemRightOfSeparatorIsNotHidden() {
+        let items = [
+            MenuBarItem(id: 1, ownerName: "A", ownerPID: 1, frame: CGRect(x: 300, y: 0, width: 30, height: 24)),
+        ]
+        let hidden = MenuBarScanner.hiddenItems(from: items, separatorX: 200)
 
-        XCTAssertTrue(vm.hiddenIDs.contains(1))
-        XCTAssertEqual(vm.hiddenItems.count, 1)
-        XCTAssertEqual(vm.hiddenItems[0].id, 1)
-        XCTAssertEqual(vm.visibleItems.count, 2)
+        XCTAssertEqual(hidden.count, 0)
     }
 
-    func testToggleTwiceUnhidesItem() {
-        vm.toggleHidden(vm.items[0])
-        vm.toggleHidden(vm.items[0])
+    func testItemExactlyTouchingSeparatorIsHidden() {
+        // maxX == separatorX → fully left, should be hidden
+        let items = [
+            MenuBarItem(id: 1, ownerName: "A", ownerPID: 1, frame: CGRect(x: 170, y: 0, width: 30, height: 24)),
+        ]
+        let hidden = MenuBarScanner.hiddenItems(from: items, separatorX: 200)
 
-        XCTAssertFalse(vm.hiddenIDs.contains(1))
-        XCTAssertEqual(vm.hiddenItems.count, 0)
-        XCTAssertEqual(vm.visibleItems.count, 3)
+        XCTAssertEqual(hidden.count, 1)
     }
 
-    func testMultipleItemsHidden() {
-        vm.toggleHidden(vm.items[0])
-        vm.toggleHidden(vm.items[2])
+    func testNoItemsHiddenWhenSeparatorAtLeftEdge() {
+        let items = [
+            MenuBarItem(id: 1, ownerName: "A", ownerPID: 1, frame: CGRect(x: 50, y: 0, width: 30, height: 24)),
+        ]
+        let hidden = MenuBarScanner.hiddenItems(from: items, separatorX: 0)
 
-        XCTAssertEqual(vm.hiddenItems.count, 2)
-        XCTAssertEqual(vm.visibleItems.count, 1)
-        XCTAssertEqual(vm.visibleItems[0].id, 2)
+        XCTAssertEqual(hidden.count, 0)
     }
 
-    func testHiddenItemsSortedByPosition() {
-        vm.toggleHidden(vm.items[2]) // x=300
-        vm.toggleHidden(vm.items[0]) // x=100
+    func testAllItemsHiddenWhenSeparatorAtFarRight() {
+        let items = [
+            MenuBarItem(id: 1, ownerName: "A", ownerPID: 1, frame: CGRect(x: 50, y: 0, width: 30, height: 24)),
+            MenuBarItem(id: 2, ownerName: "B", ownerPID: 2, frame: CGRect(x: 150, y: 0, width: 30, height: 24)),
+        ]
+        let hidden = MenuBarScanner.hiddenItems(from: items, separatorX: 10000)
 
-        XCTAssertEqual(vm.hiddenItems[0].id, 1) // x=100 first
-        XCTAssertEqual(vm.hiddenItems[1].id, 3) // x=300 second
+        XCTAssertEqual(hidden.count, 2)
     }
 
-    func testVisibleItemsSortedByPosition() {
-        vm.toggleHidden(vm.items[1]) // hide middle item
+    func testEmptyItemsReturnsEmpty() {
+        let hidden = MenuBarScanner.hiddenItems(from: [], separatorX: 200)
+        XCTAssertTrue(hidden.isEmpty)
+    }
 
-        XCTAssertEqual(vm.visibleItems[0].id, 1) // x=100
-        XCTAssertEqual(vm.visibleItems[1].id, 3) // x=300
+    func testHiddenItemsPreserveSortOrder() {
+        let items = [
+            MenuBarItem(id: 1, ownerName: "A", ownerPID: 1, frame: CGRect(x: 50, y: 0, width: 30, height: 24)),
+            MenuBarItem(id: 2, ownerName: "B", ownerPID: 2, frame: CGRect(x: 100, y: 0, width: 30, height: 24)),
+            MenuBarItem(id: 3, ownerName: "C", ownerPID: 3, frame: CGRect(x: 150, y: 0, width: 30, height: 24)),
+        ]
+        let hidden = MenuBarScanner.hiddenItems(from: items, separatorX: 200)
+
+        XCTAssertEqual(hidden.map(\.ownerName), ["A", "B", "C"])
     }
 }
