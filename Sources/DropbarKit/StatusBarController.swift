@@ -4,21 +4,20 @@ import SwiftUI
 public class StatusBarController: NSObject {
     private let chevronItem: NSStatusItem
     private let separatorItem: NSStatusItem
-    private let expanderItem: NSStatusItem
     private let scanner = MenuBarScanner()
     private var panel: DropbarPanel?
     private var lastCloseTime = Date.distantPast
+    private var clickPending = false
 
     static let expandedLength: CGFloat = 10_000
 
     public override init() {
-        // Creation order = right-to-left in menu bar
         chevronItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         separatorItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        expanderItem = NSStatusBar.system.statusItem(withLength: 0)
         super.init()
         setupChevron()
         setupSeparator()
+        // Let positions settle, then hide items
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.expand()
         }
@@ -52,11 +51,13 @@ public class StatusBarController: NSObject {
     // MARK: - Expand / Collapse
 
     private func expand() {
-        expanderItem.length = Self.expandedLength
+        separatorItem.length = Self.expandedLength
+        separatorItem.button?.title = ""
     }
 
     private func collapse() {
-        expanderItem.length = 0
+        separatorItem.length = NSStatusItem.variableLength
+        separatorItem.button?.title = "│"
     }
 
     // MARK: - Dropdown
@@ -69,19 +70,33 @@ public class StatusBarController: NSObject {
             return
         }
 
-        showHiddenItems()
+        openDropdown()
     }
 
-    private func showHiddenItems() {
-        guard let sepWindow = separatorItem.button?.window else { return }
-        let sepX = sepWindow.frame.origin.x
+    private func openDropdown() {
+        // Collapse → │ visible, hidden items slide on-screen
+        collapse()
 
-        // Scan ALL windows (including off-screen pushed items) — no collapse needed
-        let allItems = scanner.scanAndCapture(onScreenOnly: false)
-        let hidden = MenuBarScanner.hiddenItems(from: allItems, separatorX: sepX)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            guard let self else { return }
 
-        guard !hidden.isEmpty else { return }
-        showPanel(with: hidden)
+            guard let sepWindow = self.separatorItem.button?.window else {
+                self.expand()
+                return
+            }
+
+            let sepX = sepWindow.frame.origin.x
+            let allItems = self.scanner.scanAndCapture()
+            let hidden = MenuBarScanner.hiddenItems(from: allItems, separatorX: sepX)
+
+            guard !hidden.isEmpty else {
+                self.expand()
+                return
+            }
+
+            // Show panel — stay collapsed while it's open
+            self.showPanel(with: hidden)
+        }
     }
 
     // MARK: - Panel
@@ -93,6 +108,10 @@ public class StatusBarController: NSObject {
         panel.onClose = { [weak self] in
             self?.lastCloseTime = Date()
             self?.panel = nil
+            // Expand on close — unless a click-through is handling it
+            if self?.clickPending != true {
+                self?.expand()
+            }
         }
 
         let content = DropbarContentView(items: items) { [weak self] item in
@@ -105,16 +124,16 @@ public class StatusBarController: NSObject {
     // MARK: - Click-through
 
     private func handleItemClick(_ item: MenuBarItem) {
+        clickPending = true
         panel?.dismiss()
 
-        // Collapse expander so target slides on-screen, click, re-expand
-        collapse()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-            guard let self else { return }
-            self.clickMenuItem(item)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.expand()
-            }
+        // Items are already on-screen (collapsed), click directly
+        clickMenuItem(item)
+
+        // Re-expand after click registers
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.expand()
+            self?.clickPending = false
         }
     }
 
@@ -132,6 +151,7 @@ public class StatusBarController: NSObject {
             suppression.localEventsSuppressionInterval = 0
         }
 
+        // Fresh frame — item is on-screen right now
         let frame = scanner.currentFrame(for: item.id) ?? item.frame
         let clickPoint = CGPoint(x: frame.midX, y: frame.midY)
 
