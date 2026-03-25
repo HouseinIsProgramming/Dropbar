@@ -1,36 +1,13 @@
 import SwiftUI
 
-class DropbarViewModel: ObservableObject {
-    @Published var items: [MenuBarItem] = []
-    @Published var hiddenIDs: Set<CGWindowID> = []
-
-    func toggleHidden(_ item: MenuBarItem) {
-        if hiddenIDs.contains(item.id) {
-            hiddenIDs.remove(item.id)
-        } else {
-            hiddenIDs.insert(item.id)
-        }
-    }
-
-    var hiddenItems: [MenuBarItem] {
-        items.filter { hiddenIDs.contains($0.id) }
-            .sorted { $0.frame.origin.x < $1.frame.origin.x }
-    }
-
-    var visibleItems: [MenuBarItem] {
-        items.filter { !hiddenIDs.contains($0.id) }
-            .sorted { $0.frame.origin.x < $1.frame.origin.x }
-    }
-}
-
 struct DropbarContentView: View {
-    @ObservedObject var viewModel: DropbarViewModel
+    let items: [MenuBarItem]
     let onItemClicked: (MenuBarItem) -> Void
 
     @State private var hoveredID: CGWindowID?
 
     var body: some View {
-        if viewModel.items.isEmpty {
+        if items.isEmpty {
             Text("No menu bar items found.")
                 .foregroundStyle(.secondary)
                 .font(.system(size: 11))
@@ -38,39 +15,19 @@ struct DropbarContentView: View {
                 .padding(.vertical, 8)
         } else {
             HStack(spacing: 0) {
-                ForEach(viewModel.hiddenItems) { item in
-                    itemButton(item, isHidden: true)
-                }
-
-                if !viewModel.hiddenItems.isEmpty {
-                    divider
-                }
-
-                ForEach(viewModel.visibleItems) { item in
-                    itemButton(item, isHidden: false)
+                ForEach(items) { item in
+                    itemButton(item)
                 }
             }
             .padding(.horizontal, 4)
             .padding(.vertical, 2)
-            .animation(.easeInOut(duration: 0.15), value: viewModel.hiddenIDs)
         }
     }
 
-    private var divider: some View {
-        Rectangle()
-            .fill(Color.primary.opacity(0.2))
-            .frame(width: 1, height: NSStatusBar.system.thickness - 4)
-            .padding(.horizontal, 4)
-    }
-
     @ViewBuilder
-    private func itemButton(_ item: MenuBarItem, isHidden: Bool) -> some View {
+    private func itemButton(_ item: MenuBarItem) -> some View {
         Button {
-            if NSApp.currentEvent?.modifierFlags.contains(.option) == true {
-                viewModel.toggleHidden(item)
-            } else {
-                onItemClicked(item)
-            }
+            onItemClicked(item)
         } label: {
             Group {
                 if let image = item.image {
@@ -82,7 +39,6 @@ struct DropbarContentView: View {
                         .frame(width: 24, height: NSStatusBar.system.thickness)
                 }
             }
-            .opacity(isHidden ? 0.4 : 1.0)
             .padding(.horizontal, 2)
             .background(
                 RoundedRectangle(cornerRadius: 4)
@@ -90,7 +46,7 @@ struct DropbarContentView: View {
             )
         }
         .buttonStyle(.plain)
-        .help(isHidden ? "⌥+click to show" : "⌥+click to hide")
+        .help(item.ownerName)
         .onHover { hovering in
             hoveredID = hovering ? item.id : nil
         }
