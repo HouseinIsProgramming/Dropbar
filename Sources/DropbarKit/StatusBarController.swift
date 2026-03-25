@@ -9,26 +9,12 @@ public class StatusBarController: NSObject {
     private var cachedHiddenItems: [MenuBarItem] = []
     private var isCollapsed = false
     private var lastCloseTime = Date.distantPast
-    private var repositionTimer: Timer?
 
     public override init() {
         toggleItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         toggleItem.autosaveName = "DropbarToggle"
         super.init()
         setupToggleItem()
-
-        if UserDefaults.standard.bool(forKey: "dropbar.collapsed") {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-                self?.captureAndCollapse()
-            }
-        }
-
-        // Poll for menu bar layout changes (items dragged, added, removed).
-        // macOS has no notification for this, so we check periodically.
-        repositionTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
-            guard let self, self.isCollapsed, self.coverWindow != nil else { return }
-            self.updateCover()
-        }
     }
 
     private func setupToggleItem() {
@@ -127,21 +113,6 @@ public class StatusBarController: NSObject {
     private func removeCover() {
         coverWindow?.close()
         coverWindow = nil
-    }
-
-    /// Re-check the toggle position and resize the cover if items were
-    /// dragged around in the menu bar.
-    private func updateCover() {
-        let tx = toggleX
-        guard tx > 0 else { return }
-        if let cover = coverWindow {
-            var f = cover.frame
-            let screen = toggleItem.button?.window?.screen ?? NSScreen.main ?? NSScreen.screens[0]
-            f = NSRect(x: f.origin.x, y: screen.frame.maxY - NSStatusBar.system.thickness, width: tx - f.origin.x, height: f.size.height)
-            if f.width > 0 {
-                cover.setFrame(f, display: true)
-            }
-        }
     }
 
     private func expand() {
@@ -251,7 +222,6 @@ public class StatusBarController: NSObject {
     }
 
     @objc private func quit() {
-        repositionTimer?.invalidate()
         removeCover()
         NSApp.terminate(nil)
     }
