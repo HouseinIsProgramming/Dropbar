@@ -2,28 +2,25 @@ import Cocoa
 import SwiftUI
 
 public class StatusBarController: NSObject {
-    private let separatorItem: NSStatusItem
     private let chevronItem: NSStatusItem
+    private let separatorItem: NSStatusItem
+    private let expanderItem: NSStatusItem
     private let scanner = MenuBarScanner()
     private var panel: DropbarPanel?
     private var lastCloseTime = Date.distantPast
-    private var separatorX: CGFloat = 0
 
     static let expandedLength: CGFloat = 10_000
 
     public override init() {
+        // Creation order = right-to-left in menu bar
         chevronItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         separatorItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        expanderItem = NSStatusBar.system.statusItem(withLength: 0)
         super.init()
-        setupSeparator()
         setupChevron()
-
-        // Briefly show collapsed to capture separator position, then expand
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            self?.captureSeparatorPosition()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-                self?.expand()
-            }
+        setupSeparator()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.expand()
         }
     }
 
@@ -31,8 +28,7 @@ public class StatusBarController: NSObject {
 
     private func setupSeparator() {
         separatorItem.autosaveName = "Dropbar-Separator"
-        guard let button = separatorItem.button else { return }
-        button.title = "│"
+        separatorItem.button?.title = "│"
     }
 
     private func setupChevron() {
@@ -56,19 +52,11 @@ public class StatusBarController: NSObject {
     // MARK: - Expand / Collapse
 
     private func expand() {
-        separatorItem.length = Self.expandedLength
-        separatorItem.button?.title = ""
+        expanderItem.length = Self.expandedLength
     }
 
     private func collapse() {
-        separatorItem.length = NSStatusItem.variableLength
-        separatorItem.button?.title = "│"
-    }
-
-    private func captureSeparatorPosition() {
-        if let window = separatorItem.button?.window {
-            separatorX = window.frame.origin.x
-        }
+        expanderItem.length = 0
     }
 
     // MARK: - Dropdown
@@ -85,24 +73,15 @@ public class StatusBarController: NSObject {
     }
 
     private func showHiddenItems() {
-        // Collapse so items slide on-screen for scanning
-        collapse()
+        guard let sepWindow = separatorItem.button?.window else { return }
+        let sepX = sepWindow.frame.origin.x
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-            guard let self else { return }
+        // Scan ALL windows (including off-screen pushed items) — no collapse needed
+        let allItems = scanner.scanAndCapture(onScreenOnly: false)
+        let hidden = MenuBarScanner.hiddenItems(from: allItems, separatorX: sepX)
 
-            // Capture fresh separator position
-            self.captureSeparatorPosition()
-
-            let allItems = self.scanner.scanAndCapture()
-            let hidden = MenuBarScanner.hiddenItems(from: allItems, separatorX: self.separatorX)
-
-            // Re-expand to push items off
-            self.expand()
-
-            guard !hidden.isEmpty else { return }
-            self.showPanel(with: hidden)
-        }
+        guard !hidden.isEmpty else { return }
+        showPanel(with: hidden)
     }
 
     // MARK: - Panel
@@ -128,7 +107,7 @@ public class StatusBarController: NSObject {
     private func handleItemClick(_ item: MenuBarItem) {
         panel?.dismiss()
 
-        // Collapse so target slides on-screen, click it, then re-expand
+        // Collapse expander so target slides on-screen, click, re-expand
         collapse()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             guard let self else { return }
@@ -153,7 +132,6 @@ public class StatusBarController: NSObject {
             suppression.localEventsSuppressionInterval = 0
         }
 
-        // Fresh frame after collapse — item is on-screen now
         let frame = scanner.currentFrame(for: item.id) ?? item.frame
         let clickPoint = CGPoint(x: frame.midX, y: frame.midY)
 

@@ -12,9 +12,13 @@ public class MenuBarScanner {
         items.filter { $0.frame.maxX <= separatorX }
     }
 
-    public func scan() -> [MenuBarItem] {
+    public func scan(onScreenOnly: Bool = true) -> [MenuBarItem] {
+        let option: CGWindowListOption = onScreenOnly
+            ? [.optionOnScreenOnly]
+            : CGWindowListOption(rawValue: 0)
+
         guard let windowList = CGWindowListCopyWindowInfo(
-            [.optionOnScreenOnly],
+            option,
             kCGNullWindowID
         ) as? [[String: Any]] else {
             return []
@@ -25,18 +29,14 @@ public class MenuBarScanner {
             .sorted { $0.frame.origin.x < $1.frame.origin.x }
     }
 
-    public func scanAndCapture() -> [MenuBarItem] {
-        scan().map { item in
+    public func scanAndCapture(onScreenOnly: Bool = true) -> [MenuBarItem] {
+        scan(onScreenOnly: onScreenOnly).map { item in
             var captured = item
             captured.image = captureImage(for: item)
             return captured
         }
     }
 
-    /// Get a window's CURRENT frame right before clicking (not cached).
-    /// Same approach as Ice's `getCurrentFrame` which calls
-    /// `Bridging.getWindowFrame(for:)` — we use CGWindowList instead
-    /// of the private CGSGetScreenRectForWindow.
     public func currentFrame(for windowID: CGWindowID) -> CGRect? {
         guard let windowList = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly],
@@ -60,8 +60,9 @@ public class MenuBarScanner {
     }
 
     public func captureImage(for item: MenuBarItem) -> NSImage? {
+        // .null = capture the whole window regardless of screen position
         guard let cgImage = CGWindowListCreateImage(
-            item.frame,
+            .null,
             .optionIncludingWindow,
             item.id,
             [.bestResolution, .boundsIgnoreFraming]
