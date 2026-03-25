@@ -9,6 +9,7 @@ public class StatusBarController: NSObject {
 
     public override init() {
         toggleItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        toggleItem.autosaveName = "DropbarToggle"
         super.init()
         setupToggleItem()
     }
@@ -50,6 +51,7 @@ public class StatusBarController: NSObject {
         panel.onClose = { [weak self] in
             self?.lastCloseTime = Date()
             self?.panel = nil
+            self?.toggleItem.isVisible = true
         }
 
         let content = DropbarContentView(items: items) { [weak self] item in
@@ -57,6 +59,9 @@ public class StatusBarController: NSObject {
         }
         panel.show(anchoredBelow: buttonWindow, content: content)
         self.panel = panel
+
+        // Hide the chevron while the panel is open
+        toggleItem.isVisible = false
     }
 
     // MARK: - Click-through (Ice's approach)
