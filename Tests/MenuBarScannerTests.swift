@@ -29,11 +29,6 @@ final class MenuBarScannerTests: XCTestCase {
         XCTAssertNil(scanner.parseWindow(info), "should reject non-menu-bar layer")
     }
 
-    func testRejectsOffScreenY() {
-        let info = makeWindowInfo(y: 100)
-        XCTAssertNil(scanner.parseWindow(info), "should reject windows not at top of screen")
-    }
-
     func testRejectsZeroWidth() {
         let info = makeWindowInfo(width: 0)
         XCTAssertNil(scanner.parseWindow(info), "should reject zero-width windows")

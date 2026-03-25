@@ -28,9 +28,13 @@ public class MenuBarScanner {
     public func scanAndCapture() -> [MenuBarItem] {
         scan().map { item in
             var captured = item
-            captured.image = captureImage(for: item)
+            captured.image = appIcon(for: item.ownerPID)
             return captured
         }
+    }
+
+    func appIcon(for pid: pid_t) -> NSImage? {
+        NSRunningApplication(processIdentifier: pid)?.icon
     }
 
     public func currentFrame(for windowID: CGWindowID) -> CGRect? {
@@ -55,21 +59,6 @@ public class MenuBarScanner {
         return nil
     }
 
-    public func captureImage(for item: MenuBarItem) -> NSImage? {
-        guard let cgImage = CGWindowListCreateImage(
-            item.frame,
-            .optionIncludingWindow,
-            item.id,
-            [.bestResolution, .boundsIgnoreFraming]
-        ) else { return nil }
-
-        let scale = NSScreen.main?.backingScaleFactor ?? 2.0
-        let size = NSSize(
-            width: CGFloat(cgImage.width) / scale,
-            height: CGFloat(cgImage.height) / scale
-        )
-        return NSImage(cgImage: cgImage, size: size)
-    }
 
     func parseWindow(_ info: [String: Any]) -> MenuBarItem? {
         guard let windowID = info[kCGWindowNumber as String] as? CGWindowID,
@@ -91,8 +80,7 @@ public class MenuBarScanner {
         )
 
         let menuBarHeight = NSStatusBar.system.thickness
-        guard frame.origin.y == 0,
-              frame.height > 0,
+        guard frame.height > 0,
               frame.height <= menuBarHeight + 10,
               frame.width > 0,
               frame.width < Self.maxStatusItemWidth
