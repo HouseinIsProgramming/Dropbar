@@ -3,29 +3,31 @@ import SwiftUI
 
 public class StatusBarController: NSObject {
     private let toggleItem: NSStatusItem
-    private let separatorItem: NSStatusItem
     private let scanner = MenuBarScanner()
     private var panel: DropbarPanel?
+    private var coverWindow: NSWindow?
     private var cachedHiddenItems: [MenuBarItem] = []
     private var isCollapsed = false
     private var lastCloseTime = Date.distantPast
-    private let hiddenWidth: CGFloat = 10000
+    private var repositionTimer: Timer?
 
     public override init() {
         toggleItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         toggleItem.autosaveName = "DropbarToggle"
-        // Thin separator to the left of toggle. Needs non-zero length
-        // to have a window in the menu bar. When expanded to 10000,
-        // pushes everything to its left off-screen.
-        separatorItem = NSStatusBar.system.statusItem(withLength: 1)
         super.init()
         setupToggleItem()
 
-        // Restore collapsed state from previous session
         if UserDefaults.standard.bool(forKey: "dropbar.collapsed") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
                 self?.captureAndCollapse()
             }
+        }
+
+        // Poll for menu bar layout changes (items dragged, added, removed).
+        // macOS has no notification for this, so we check periodically.
+        repositionTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            guard let self, self.isCollapsed, self.coverWindow != nil else { return }
+            self.updateCover()
         }
     }
 
@@ -54,14 +56,15 @@ public class StatusBarController: NSObject {
             return
         }
 
-        // If items are visible, capture those left of the toggle and hide them
+        // First click: capture items left of toggle and cover them.
+        // Subsequent clicks while covered: just show the panel.
         if !isCollapsed {
             captureAndCollapse()
         }
         showPanel()
     }
 
-    // MARK: - Hide / Show
+    // MARK: - Cover window (hides items visually)
 
     private var toggleX: CGFloat {
         toggleItem.button?.window?.frame.origin.x ?? 0
@@ -70,18 +73,79 @@ public class StatusBarController: NSObject {
     private func captureAndCollapse() {
         let tx = toggleX
         guard tx > 0 else { return }
+        // Re-scan: uncover first so items are visible for capture
+        removeCover()
         cachedHiddenItems = scanner.scanAndCapture().filter { $0.frame.maxX <= tx }
-        collapse()
-    }
-
-    private func collapse() {
-        separatorItem.length = hiddenWidth
+        guard !cachedHiddenItems.isEmpty else { return }
+        placeCover()
         isCollapsed = true
         UserDefaults.standard.set(true, forKey: "dropbar.collapsed")
     }
 
+    private func placeCover() {
+        let tx = toggleX
+        guard tx > 0,
+              let leftmost = cachedHiddenItems.min(by: { $0.frame.origin.x < $1.frame.origin.x }),
+              let screen = toggleItem.button?.window?.screen ?? NSScreen.main
+        else { return }
+
+        let startX = leftmost.frame.origin.x
+        let coverWidth = tx - startX
+        guard coverWidth > 0 else { return }
+
+        let menuBarHeight = NSStatusBar.system.thickness
+        let frame = NSRect(
+            x: startX,
+            y: screen.frame.maxY - menuBarHeight,
+            width: coverWidth,
+            height: menuBarHeight
+        )
+
+        let w = NSWindow(
+            contentRect: frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        w.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
+        w.backgroundColor = .clear
+        w.isOpaque = false
+        w.hasShadow = false
+        w.ignoresMouseEvents = false
+        w.collectionBehavior = [.canJoinAllSpaces, .stationary]
+
+        let effect = NSVisualEffectView(frame: NSRect(origin: .zero, size: frame.size))
+        effect.material = .menu
+        effect.blendingMode = .behindWindow
+        effect.state = .active
+        w.contentView = effect
+
+        w.orderFront(nil)
+        coverWindow = w
+    }
+
+    private func removeCover() {
+        coverWindow?.close()
+        coverWindow = nil
+    }
+
+    /// Re-check the toggle position and resize the cover if items were
+    /// dragged around in the menu bar.
+    private func updateCover() {
+        let tx = toggleX
+        guard tx > 0 else { return }
+        if let cover = coverWindow {
+            var f = cover.frame
+            let screen = toggleItem.button?.window?.screen ?? NSScreen.main ?? NSScreen.screens[0]
+            f = NSRect(x: f.origin.x, y: screen.frame.maxY - NSStatusBar.system.thickness, width: tx - f.origin.x, height: f.size.height)
+            if f.width > 0 {
+                cover.setFrame(f, display: true)
+            }
+        }
+    }
+
     private func expand() {
-        separatorItem.length = 1
+        removeCover()
         isCollapsed = false
         UserDefaults.standard.set(false, forKey: "dropbar.collapsed")
     }
@@ -91,7 +155,6 @@ public class StatusBarController: NSObject {
     private func showPanel() {
         guard let buttonWindow = toggleItem.button?.window else { return }
 
-        // Merge visible + cached hidden, deduplicated by window ID
         let visibleItems = scanner.scanAndCapture()
         let hiddenIDs = Set(cachedHiddenItems.map(\.id))
         let allItems = (cachedHiddenItems + visibleItems.filter { !hiddenIDs.contains($0.id) })
@@ -117,10 +180,14 @@ public class StatusBarController: NSObject {
         panel?.dismiss()
 
         if wasHidden {
-            // Reveal hidden items, wait for render, then click
-            expand()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            // Temporarily remove cover so the item is clickable
+            removeCover()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
                 self?.clickMenuItem(item)
+                // Re-cover after giving the item's menu time to appear
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                    self?.placeCover()
+                }
             }
         } else {
             clickMenuItem(item)
@@ -184,8 +251,8 @@ public class StatusBarController: NSObject {
     }
 
     @objc private func quit() {
-        // Reveal hidden items before quitting so they're accessible
-        expand()
+        repositionTimer?.invalidate()
+        removeCover()
         NSApp.terminate(nil)
     }
 }
