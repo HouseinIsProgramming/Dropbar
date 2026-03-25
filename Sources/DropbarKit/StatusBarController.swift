@@ -1,13 +1,14 @@
 import Cocoa
 import SwiftUI
 
-public class StatusBarController: NSObject {
+public class StatusBarController: NSObject, NSPopoverDelegate {
     private let toggleItem: NSStatusItem
     private let separatorItem: NSStatusItem
     private let scanner = MenuBarScanner()
     private var popover: NSPopover?
     private var cachedItems: [MenuBarItem] = []
-    private var isCollapsed = false
+    private(set) var isCollapsed = false
+    private var isHandlingClick = false
     private let hiddenWidth: CGFloat = 10000
 
     public override init() {
@@ -17,6 +18,8 @@ public class StatusBarController: NSObject {
         setupToggleItem()
         setupSeparatorItem()
     }
+
+    // MARK: - Setup
 
     private func setupToggleItem() {
         guard let button = toggleItem.button else { return }
@@ -29,8 +32,13 @@ public class StatusBarController: NSObject {
     private func setupSeparatorItem() {
         guard let button = separatorItem.button else { return }
         button.title = "│"
-        button.isEnabled = false
     }
+
+    var separatorX: CGFloat {
+        separatorItem.button?.window?.frame.origin.x ?? 0
+    }
+
+    // MARK: - Toggle
 
     @objc private func toggleClicked(_ sender: NSStatusBarButton) {
         guard let event = NSApp.currentEvent else { return }
@@ -48,15 +56,18 @@ public class StatusBarController: NSObject {
         }
 
         if !isCollapsed {
-            cachedItems = scanner.scanAndCapture()
+            cachedItems = scanner.itemsLeftOf(x: separatorX)
             collapse()
         }
         showPopover()
     }
 
+    // MARK: - Popover
+
     private func showPopover() {
         let popover = NSPopover()
         popover.behavior = .transient
+        popover.delegate = self
         popover.contentViewController = NSHostingController(
             rootView: PopoverView(items: cachedItems) { [weak self] item in
                 self?.handleItemClick(item)
@@ -69,38 +80,62 @@ public class StatusBarController: NSObject {
         self.popover = popover
     }
 
+    // MARK: - Click-through
+
     private func handleItemClick(_ item: MenuBarItem) {
+        isHandlingClick = true
         popover?.performClose(nil)
         expand()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+
+        // Wait for the menu bar to re-render revealed items, then click
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self else { return }
             self.clickThroughItem(item)
+            self.isHandlingClick = false
         }
     }
 
     private func clickThroughItem(_ item: MenuBarItem) {
-        let currentItems = scanner.scan()
-        let target = currentItems.first { $0.ownerName == item.ownerName }
-        let clickPoint = CGPoint(
-            x: target?.frame.midX ?? item.frame.midX,
-            y: target?.frame.midY ?? item.frame.midY
-        )
+        let current = scanner.scan()
 
+        // Match by window ID (stable across expand/collapse)
+        let target: MenuBarItem?
+        if let byID = current.first(where: { $0.id == item.id }) {
+            target = byID
+        } else {
+            // Fallback: same owner, closest X position
+            let candidates = current.filter { $0.ownerName == item.ownerName }
+            target = candidates.min(by: {
+                abs($0.frame.midX - item.frame.midX) < abs($1.frame.midX - item.frame.midX)
+            })
+        }
+
+        guard let target else { return }
+        postClick(at: CGPoint(x: target.frame.midX, y: target.frame.midY))
+    }
+
+    private func postClick(at point: CGPoint) {
         let mouseDown = CGEvent(
             mouseEventSource: nil,
             mouseType: .leftMouseDown,
-            mouseCursorPosition: clickPoint,
+            mouseCursorPosition: point,
             mouseButton: .left
         )
-        let mouseUp = CGEvent(
-            mouseEventSource: nil,
-            mouseType: .leftMouseUp,
-            mouseCursorPosition: clickPoint,
-            mouseButton: .left
-        )
-
         mouseDown?.post(tap: .cghidEventTap)
-        mouseUp?.post(tap: .cghidEventTap)
+
+        // Stagger mouseUp so macOS registers it as a real click
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            let mouseUp = CGEvent(
+                mouseEventSource: nil,
+                mouseType: .leftMouseUp,
+                mouseCursorPosition: point,
+                mouseButton: .left
+            )
+            mouseUp?.post(tap: .cghidEventTap)
+        }
     }
+
+    // MARK: - Collapse / Expand
 
     private func collapse() {
         separatorItem.length = hiddenWidth
@@ -111,6 +146,16 @@ public class StatusBarController: NSObject {
         separatorItem.length = NSStatusItem.squareLength
         isCollapsed = false
     }
+
+    // MARK: - NSPopoverDelegate
+
+    public func popoverDidClose(_ notification: Notification) {
+        if isCollapsed && !isHandlingClick {
+            expand()
+        }
+    }
+
+    // MARK: - Context Menu
 
     private func showContextMenu() {
         let menu = NSMenu()
