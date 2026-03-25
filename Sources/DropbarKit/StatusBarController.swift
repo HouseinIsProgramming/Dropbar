@@ -5,10 +5,8 @@ public class StatusBarController: NSObject {
     private let toggleItem: NSStatusItem
     private let separatorItem: NSStatusItem
     private let scanner = MenuBarScanner()
+    private let viewModel = DropbarViewModel()
     private var panel: DropbarPanel?
-    private var cachedHiddenItems: [MenuBarItem] = []
-    private var allSortedItems: [MenuBarItem] = []
-    private var hiddenCount = 0
     private var isCollapsed = false
     private var lastCloseTime = Date.distantPast
 
@@ -33,13 +31,10 @@ public class StatusBarController: NSObject {
         super.init()
         setupToggleItem()
 
-        // Restore from previous session
-        let saved = UserDefaults.standard.integer(forKey: "dropbar.hiddenCount")
-        if saved > 0 {
+        // Auto-collapse on launch if items were hidden in previous session
+        if UserDefaults.standard.bool(forKey: "dropbar.collapsed") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-                guard let self else { return }
-                self.hiddenCount = saved
-                self.captureAndCollapse()
+                self?.scanAndCollapse()
             }
         }
     }
@@ -69,64 +64,67 @@ public class StatusBarController: NSObject {
             return
         }
 
-        // If items are visible, scan and hide
-        if !isCollapsed {
-            captureAndCollapse()
+        // Scan items while visible (expand if needed)
+        if isCollapsed {
+            separatorItem.length = 0
+            isCollapsed = false
         }
-        showPanel()
+
+        // Brief delay for items to settle after expand
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.scanAndShowPanel()
+        }
     }
 
-    // MARK: - Hide / Show
+    // MARK: - Scan & Show
 
     private var toggleX: CGFloat {
         toggleItem.button?.window?.frame.origin.x ?? 0
     }
 
-    private func captureAndCollapse() {
-        // Expand first to ensure items are visible for capture
-        if isCollapsed {
-            separatorItem.length = 0
+    private func scanAndShowPanel() {
+        let tx = toggleX
+        let items = scanner.scanAndCapture()
+
+        viewModel.items = items
+
+        // Items left of the chevron are initially hidden
+        if viewModel.hiddenIDs.isEmpty {
+            let leftOfToggle = items.filter { $0.frame.maxX <= tx }
+            viewModel.hiddenIDs = Set(leftOfToggle.map(\.id))
+        } else {
+            // Keep existing hidden set but remove IDs that no longer exist
+            let currentIDs = Set(items.map(\.id))
+            viewModel.hiddenIDs = viewModel.hiddenIDs.intersection(currentIDs)
         }
 
-        // Small delay for items to settle after expand
+        // Collapse to hide items
+        if !viewModel.hiddenIDs.isEmpty {
+            separatorItem.length = 10_000
+            isCollapsed = true
+            UserDefaults.standard.set(true, forKey: "dropbar.collapsed")
+        }
+
+        showPanel()
+    }
+
+    private func scanAndCollapse() {
         let tx = toggleX
         guard tx > 0 else { return }
+        let items = scanner.scanAndCapture()
+        viewModel.items = items
+        viewModel.hiddenIDs = Set(items.filter { $0.frame.maxX <= tx }.map(\.id))
 
-        let items = scanner.scanAndCapture().sorted { $0.frame.origin.x < $1.frame.origin.x }
-        let leftOfToggle = items.filter { $0.frame.maxX <= tx }
-
-        // If no explicit hiddenCount yet, hide everything left of toggle
-        if hiddenCount == 0 || hiddenCount > leftOfToggle.count {
-            hiddenCount = leftOfToggle.count
+        if !viewModel.hiddenIDs.isEmpty {
+            separatorItem.length = 10_000
+            isCollapsed = true
         }
-
-        allSortedItems = items
-        cachedHiddenItems = Array(items.prefix(hiddenCount))
-        collapse()
-    }
-
-    private func collapse() {
-        guard hiddenCount > 0 else { return }
-        separatorItem.length = 10_000
-        isCollapsed = true
-        UserDefaults.standard.set(hiddenCount, forKey: "dropbar.hiddenCount")
-    }
-
-    private func expand() {
-        separatorItem.length = 0
-        isCollapsed = false
     }
 
     // MARK: - Panel
 
     private func showPanel() {
         guard let buttonWindow = toggleItem.button?.window else { return }
-
-        // Re-merge: cached hidden + fresh visible scan
-        let visibleItems = scanner.scanAndCapture()
-        let hiddenIDs = Set(cachedHiddenItems.map(\.id))
-        allSortedItems = (cachedHiddenItems + visibleItems.filter { !hiddenIDs.contains($0.id) })
-            .sorted { $0.frame.origin.x < $1.frame.origin.x }
 
         let panel = DropbarPanel()
         panel.onClose = { [weak self] in
@@ -135,47 +133,24 @@ public class StatusBarController: NSObject {
         }
 
         let content = DropbarContentView(
-            items: allSortedItems,
-            hiddenCount: hiddenCount,
-            onItemClicked: { [weak self] item in self?.handleItemClick(item) },
-            onItemOptionClicked: { [weak self] index in self?.handleOptionClick(at: index) }
+            viewModel: viewModel,
+            onItemClicked: { [weak self] item in self?.handleItemClick(item) }
         )
         panel.show(anchoredBelow: buttonWindow, content: content)
         self.panel = panel
     }
 
-    // MARK: - Option+click (toggle hidden/visible)
-
-    private func handleOptionClick(at index: Int) {
-        if index < hiddenCount {
-            // Unhide: move divider to this index (unhide this item and all to its right)
-            hiddenCount = index
-        } else {
-            // Hide: move divider past this item (hide this item and all to its left)
-            hiddenCount = index + 1
-        }
-
-        UserDefaults.standard.set(hiddenCount, forKey: "dropbar.hiddenCount")
-
-        // Refresh: expand, re-scan, re-collapse, re-show panel
-        panel?.dismiss()
-        expand()
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-            guard let self else { return }
-            self.captureAndCollapse()
-            self.showPanel()
-        }
-    }
-
     // MARK: - Click-through
 
     private func handleItemClick(_ item: MenuBarItem) {
-        let wasHidden = cachedHiddenItems.contains(item)
+        let wasHidden = viewModel.hiddenIDs.contains(item.id)
         panel?.dismiss()
 
         if wasHidden {
-            expand()
+            // Reveal items temporarily to click the target
+            separatorItem.length = 0
+            isCollapsed = false
+
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                 self?.clickMenuItem(item)
             }
@@ -244,9 +219,10 @@ public class StatusBarController: NSObject {
     }
 
     @objc private func showAllItems() {
-        hiddenCount = 0
-        expand()
-        UserDefaults.standard.set(0, forKey: "dropbar.hiddenCount")
+        viewModel.hiddenIDs.removeAll()
+        separatorItem.length = 0
+        isCollapsed = false
+        UserDefaults.standard.set(false, forKey: "dropbar.collapsed")
     }
 
     @objc private func quit() {
