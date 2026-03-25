@@ -7,6 +7,8 @@ public class StatusBarController: NSObject {
     private let scanner = MenuBarScanner()
     private var panel: DropbarPanel?
     private var cachedHiddenItems: [MenuBarItem] = []
+    private var allSortedItems: [MenuBarItem] = []
+    private var hiddenCount = 0
     private var isCollapsed = false
     private var lastCloseTime = Date.distantPast
 
@@ -14,11 +16,6 @@ public class StatusBarController: NSObject {
         let toggleName = "DropbarToggle"
         let separatorName = "DropbarSep"
 
-        // Set preferred positions BEFORE creating items. This is the same
-        // technique Ice uses (StatusItemDefaults). Position 0 = rightmost
-        // among our items, position 1 = to its left.
-        // Without this, macOS can place the separator to the RIGHT of the
-        // toggle, causing the toggle to get pushed off-screen on expansion.
         let posKey = "NSStatusItem Preferred Position"
         if UserDefaults.standard.object(forKey: "\(posKey) \(toggleName)") == nil {
             UserDefaults.standard.set(0, forKey: "\(posKey) \(toggleName)")
@@ -30,18 +27,19 @@ public class StatusBarController: NSObject {
         toggleItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         toggleItem.autosaveName = toggleName
 
-        // Separator: invisible (length 0) when items are shown.
-        // Expands to 10,000 to push items to its left off-screen.
         separatorItem = NSStatusBar.system.statusItem(withLength: 0)
         separatorItem.autosaveName = separatorName
 
         super.init()
         setupToggleItem()
 
-        // Restore collapsed state from previous session
-        if UserDefaults.standard.bool(forKey: "dropbar.collapsed") {
+        // Restore from previous session
+        let saved = UserDefaults.standard.integer(forKey: "dropbar.hiddenCount")
+        if saved > 0 {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-                self?.captureAndCollapse()
+                guard let self else { return }
+                self.hiddenCount = saved
+                self.captureAndCollapse()
             }
         }
     }
@@ -71,7 +69,7 @@ public class StatusBarController: NSObject {
             return
         }
 
-        // If items are currently visible, capture and hide them
+        // If items are visible, scan and hide
         if !isCollapsed {
             captureAndCollapse()
         }
@@ -85,22 +83,38 @@ public class StatusBarController: NSObject {
     }
 
     private func captureAndCollapse() {
+        // Expand first to ensure items are visible for capture
+        if isCollapsed {
+            separatorItem.length = 0
+        }
+
+        // Small delay for items to settle after expand
         let tx = toggleX
         guard tx > 0 else { return }
-        cachedHiddenItems = scanner.scanAndCapture().filter { $0.frame.maxX <= tx }
+
+        let items = scanner.scanAndCapture().sorted { $0.frame.origin.x < $1.frame.origin.x }
+        let leftOfToggle = items.filter { $0.frame.maxX <= tx }
+
+        // If no explicit hiddenCount yet, hide everything left of toggle
+        if hiddenCount == 0 || hiddenCount > leftOfToggle.count {
+            hiddenCount = leftOfToggle.count
+        }
+
+        allSortedItems = items
+        cachedHiddenItems = Array(items.prefix(hiddenCount))
         collapse()
     }
 
     private func collapse() {
+        guard hiddenCount > 0 else { return }
         separatorItem.length = 10_000
         isCollapsed = true
-        UserDefaults.standard.set(true, forKey: "dropbar.collapsed")
+        UserDefaults.standard.set(hiddenCount, forKey: "dropbar.hiddenCount")
     }
 
     private func expand() {
         separatorItem.length = 0
         isCollapsed = false
-        UserDefaults.standard.set(false, forKey: "dropbar.collapsed")
     }
 
     // MARK: - Panel
@@ -108,10 +122,10 @@ public class StatusBarController: NSObject {
     private func showPanel() {
         guard let buttonWindow = toggleItem.button?.window else { return }
 
-        // Merge visible + cached hidden, deduplicated by window ID
+        // Re-merge: cached hidden + fresh visible scan
         let visibleItems = scanner.scanAndCapture()
         let hiddenIDs = Set(cachedHiddenItems.map(\.id))
-        let allItems = (cachedHiddenItems + visibleItems.filter { !hiddenIDs.contains($0.id) })
+        allSortedItems = (cachedHiddenItems + visibleItems.filter { !hiddenIDs.contains($0.id) })
             .sorted { $0.frame.origin.x < $1.frame.origin.x }
 
         let panel = DropbarPanel()
@@ -120,11 +134,38 @@ public class StatusBarController: NSObject {
             self?.panel = nil
         }
 
-        let content = DropbarContentView(items: allItems) { [weak self] item in
-            self?.handleItemClick(item)
-        }
+        let content = DropbarContentView(
+            items: allSortedItems,
+            hiddenCount: hiddenCount,
+            onItemClicked: { [weak self] item in self?.handleItemClick(item) },
+            onItemOptionClicked: { [weak self] index in self?.handleOptionClick(at: index) }
+        )
         panel.show(anchoredBelow: buttonWindow, content: content)
         self.panel = panel
+    }
+
+    // MARK: - Option+click (toggle hidden/visible)
+
+    private func handleOptionClick(at index: Int) {
+        if index < hiddenCount {
+            // Unhide: move divider to this index (unhide this item and all to its right)
+            hiddenCount = index
+        } else {
+            // Hide: move divider past this item (hide this item and all to its left)
+            hiddenCount = index + 1
+        }
+
+        UserDefaults.standard.set(hiddenCount, forKey: "dropbar.hiddenCount")
+
+        // Refresh: expand, re-scan, re-collapse, re-show panel
+        panel?.dismiss()
+        expand()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            guard let self else { return }
+            self.captureAndCollapse()
+            self.showPanel()
+        }
     }
 
     // MARK: - Click-through
@@ -134,11 +175,9 @@ public class StatusBarController: NSObject {
         panel?.dismiss()
 
         if wasHidden {
-            // Reveal items so the click target is on-screen
             expand()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                 self?.clickMenuItem(item)
-                // Items stay visible; next toggle click re-captures and re-hides
             }
         } else {
             clickMenuItem(item)
@@ -159,7 +198,6 @@ public class StatusBarController: NSObject {
             suppression.localEventsSuppressionInterval = 0
         }
 
-        // Get FRESH frame right before clicking
         let frame = scanner.currentFrame(for: item.id) ?? item.frame
         let clickPoint = CGPoint(x: frame.midX, y: frame.midY)
 
@@ -194,6 +232,9 @@ public class StatusBarController: NSObject {
 
     private func showContextMenu() {
         let menu = NSMenu()
+        if isCollapsed {
+            menu.addItem(NSMenuItem(title: "Show All Items", action: #selector(showAllItems), keyEquivalent: ""))
+        }
         menu.addItem(NSMenuItem(title: "Quit Dropbar", action: #selector(quit), keyEquivalent: "q"))
         toggleItem.menu = menu
         toggleItem.button?.performClick(nil)
@@ -202,9 +243,13 @@ public class StatusBarController: NSObject {
         }
     }
 
+    @objc private func showAllItems() {
+        hiddenCount = 0
+        expand()
+        UserDefaults.standard.set(0, forKey: "dropbar.hiddenCount")
+    }
+
     @objc private func quit() {
-        // Restore normal positions before quitting so macOS saves
-        // correct positions and items aren't stuck off-screen
         separatorItem.length = 0
         NSApp.terminate(nil)
     }

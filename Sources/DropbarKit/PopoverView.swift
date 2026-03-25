@@ -2,7 +2,9 @@ import SwiftUI
 
 struct DropbarContentView: View {
     let items: [MenuBarItem]
+    let hiddenCount: Int
     let onItemClicked: (MenuBarItem) -> Void
+    let onItemOptionClicked: (Int) -> Void
 
     @State private var hoveredID: CGWindowID?
 
@@ -15,8 +17,18 @@ struct DropbarContentView: View {
                 .padding(.vertical, 8)
         } else {
             HStack(spacing: 0) {
-                ForEach(items) { item in
-                    itemButton(item)
+                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                    // Insert divider between hidden and visible groups
+                    if index == hiddenCount && hiddenCount > 0 {
+                        divider
+                    }
+
+                    itemButton(item, index: index, isHidden: index < hiddenCount)
+                }
+
+                // Divider at the end if everything is hidden
+                if hiddenCount == items.count && hiddenCount > 0 {
+                    divider
                 }
             }
             .padding(.horizontal, 4)
@@ -24,10 +36,21 @@ struct DropbarContentView: View {
         }
     }
 
+    private var divider: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.2))
+            .frame(width: 1, height: NSStatusBar.system.thickness - 4)
+            .padding(.horizontal, 4)
+    }
+
     @ViewBuilder
-    private func itemButton(_ item: MenuBarItem) -> some View {
+    private func itemButton(_ item: MenuBarItem, index: Int, isHidden: Bool) -> some View {
         Button {
-            onItemClicked(item)
+            if NSApp.currentEvent?.modifierFlags.contains(.option) == true {
+                onItemOptionClicked(index)
+            } else {
+                onItemClicked(item)
+            }
         } label: {
             Group {
                 if let image = item.image {
@@ -39,6 +62,7 @@ struct DropbarContentView: View {
                         .frame(width: 24, height: NSStatusBar.system.thickness)
                 }
             }
+            .opacity(isHidden ? 0.45 : 1.0)
             .padding(.horizontal, 2)
             .background(
                 RoundedRectangle(cornerRadius: 4)
@@ -46,7 +70,7 @@ struct DropbarContentView: View {
             )
         }
         .buttonStyle(.plain)
-        .help(item.ownerName)
+        .help(isHidden ? "\(item.ownerName) (⌥ click to show)" : "\(item.ownerName) (⌥ click to hide)")
         .onHover { hovering in
             hoveredID = hovering ? item.id : nil
         }
