@@ -28,13 +28,27 @@ public class MenuBarScanner {
     public func scanAndCapture() -> [MenuBarItem] {
         scan().map { item in
             var captured = item
-            captured.image = appIcon(for: item.ownerPID)
+            captured.image = captureImage(for: item)
             return captured
         }
     }
 
-    func appIcon(for pid: pid_t) -> NSImage? {
-        NSRunningApplication(processIdentifier: pid)?.icon
+    func captureImage(for item: MenuBarItem) -> NSImage? {
+        guard let cgImage = CGWindowListCreateImage(
+            item.frame,
+            .optionIncludingWindow,
+            item.id,
+            [.bestResolution, .boundsIgnoreFraming]
+        ) else { return nil }
+
+        let scale = NSScreen.main?.backingScaleFactor ?? 2.0
+        return NSImage(
+            cgImage: cgImage,
+            size: NSSize(
+                width: CGFloat(cgImage.width) / scale,
+                height: CGFloat(cgImage.height) / scale
+            )
+        )
     }
 
     public func currentFrame(for windowID: CGWindowID) -> CGRect? {
