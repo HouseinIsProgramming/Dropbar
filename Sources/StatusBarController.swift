@@ -72,7 +72,38 @@ class StatusBarController: NSObject {
 
     private func handleItemClick(_ item: MenuBarItem) {
         popover?.performClose(nil)
+
+        // Reveal items, wait for them to render, then click the target
         expand()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            self.clickThroughItem(item)
+        }
+    }
+
+    private func clickThroughItem(_ item: MenuBarItem) {
+        // Re-scan to get the updated frame (position may shift after reveal)
+        let currentItems = scanner.scan()
+        let target = currentItems.first { $0.ownerName == item.ownerName }
+        let clickPoint = CGPoint(
+            x: target?.frame.midX ?? item.frame.midX,
+            y: target?.frame.midY ?? item.frame.midY
+        )
+
+        let mouseDown = CGEvent(
+            mouseEventSource: nil,
+            mouseType: .leftMouseDown,
+            mouseCursorPosition: clickPoint,
+            mouseButton: .left
+        )
+        let mouseUp = CGEvent(
+            mouseEventSource: nil,
+            mouseType: .leftMouseUp,
+            mouseCursorPosition: clickPoint,
+            mouseButton: .left
+        )
+
+        mouseDown?.post(tap: .cghidEventTap)
+        mouseUp?.post(tap: .cghidEventTap)
     }
 
     private func collapse() {
