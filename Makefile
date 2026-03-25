@@ -1,3 +1,7 @@
+APP = Dropbar.app
+BUNDLE = .build/$(APP)
+INSTALL_DIR = /Applications
+
 run:
 	@pkill -x Dropbar 2>/dev/null || true
 	@swift run
@@ -11,13 +15,25 @@ build:
 test:
 	@swift test
 
-install: release
-	@cp .build/release/Dropbar /usr/local/bin/Dropbar
-	@echo "Installed to /usr/local/bin/Dropbar"
+app: release
+	@rm -rf $(BUNDLE)
+	@mkdir -p $(BUNDLE)/Contents/MacOS
+	@cp .build/release/Dropbar $(BUNDLE)/Contents/MacOS/Dropbar
+	@cp Info.plist $(BUNDLE)/Contents/Info.plist
+	@echo "Built $(BUNDLE)"
+
+install: app
+	@rm -rf $(INSTALL_DIR)/$(APP)
+	@cp -R $(BUNDLE) $(INSTALL_DIR)/$(APP)
+	@echo "Installed to $(INSTALL_DIR)/$(APP)"
 
 release:
 	@swift build -c release
-	@echo "Built .build/release/Dropbar"
+
+dist: app
+	@cd .build && zip -r Dropbar-v0.1.0.zip $(APP)
+	@echo "Built .build/Dropbar-v0.1.0.zip"
 
 clean:
 	@swift package clean
+	@rm -rf $(BUNDLE)
