@@ -11,15 +11,16 @@ public class StatusBarController: NSObject {
     private var isCollapsed = false
 
     public override init() {
-        // Create separator FIRST with variableLength so it gets a window.
-        // macOS places newer status items to the LEFT of existing ones,
-        // so separator (first) goes left, toggle (second) goes right.
-        separatorItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        separatorItem.autosaveName = "DropbarSep2"
-        separatorItem.button?.title = ""
-
+        // On macOS 26: FIRST created = RIGHTMOST.
+        // Toggle must be rightmost so expanding separator doesn't push it off.
         toggleItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        toggleItem.autosaveName = "DropbarToggle2"
+        toggleItem.autosaveName = "DropbarToggle3"
+
+        // Separator SECOND = placed to the LEFT of toggle.
+        // Must have variableLength + button so it gets a real window.
+        separatorItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        separatorItem.autosaveName = "DropbarSep3"
+        separatorItem.button?.title = ""
 
         super.init()
         setupToggleItem()
