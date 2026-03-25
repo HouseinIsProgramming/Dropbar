@@ -5,22 +5,26 @@ typealias CGSConnectionID = UInt32
 @_silgen_name("CGSMainConnectionID")
 func CGSMainConnectionID() -> CGSConnectionID
 
-@_silgen_name("CGSGetScreenRectForWindow")
-func CGSGetScreenRectForWindow(
+@_silgen_name("CGSSetWindowAlpha")
+func CGSSetWindowAlpha(
     _ cid: CGSConnectionID,
     _ wid: CGWindowID,
-    _ outRect: UnsafeMutablePointer<CGRect>
+    _ alpha: Float
 ) -> CGError
 
 enum WindowBridging {
-    static func getWindowFrame(for windowID: CGWindowID) -> CGRect? {
-        var rect = CGRect.zero
-        let result = CGSGetScreenRectForWindow(CGSMainConnectionID(), windowID, &rect)
-        return result == .success ? rect : nil
+    static func setAlpha(_ alpha: Float, for windowID: CGWindowID) {
+        let result = CGSSetWindowAlpha(CGSMainConnectionID(), windowID, alpha)
+        if result != .success {
+            print("[Dropbar] CGSSetWindowAlpha(\(windowID), \(alpha)) failed: \(result.rawValue)")
+        }
     }
 
-    static func getWindowID(for statusItem: NSStatusItem) -> CGWindowID? {
-        guard let wn = statusItem.button?.window?.windowNumber, wn > 0 else { return nil }
-        return UInt32(exactly: wn).map { CGWindowID($0) }
+    static func hideWindow(_ windowID: CGWindowID) {
+        setAlpha(0.0, for: windowID)
+    }
+
+    static func showWindow(_ windowID: CGWindowID) {
+        setAlpha(1.0, for: windowID)
     }
 }
