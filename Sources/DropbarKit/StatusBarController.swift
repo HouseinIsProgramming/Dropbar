@@ -91,9 +91,10 @@ public class StatusBarController: NSObject {
     private func showPanel() {
         guard let buttonWindow = toggleItem.button?.window else { return }
 
-        // Merge currently visible items with cached hidden items
+        // Merge visible + cached hidden, deduplicated by window ID
         let visibleItems = scanner.scanAndCapture()
-        let allItems = (cachedHiddenItems + visibleItems)
+        let hiddenIDs = Set(cachedHiddenItems.map(\.id))
+        let allItems = (cachedHiddenItems + visibleItems.filter { !hiddenIDs.contains($0.id) })
             .sorted { $0.frame.origin.x < $1.frame.origin.x }
 
         let panel = DropbarPanel()
