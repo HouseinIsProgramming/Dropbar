@@ -7,53 +7,26 @@ public class StatusBarController: NSObject {
     private let scanner = MenuBarScanner()
     private let viewModel = DropbarViewModel()
     private var panel: DropbarPanel?
-    private var lastCloseTime = Date.distantPast
     private var imageCache: [CGWindowID: NSImage] = [:]
+    private var lastCloseTime = Date.distantPast
     private var isCollapsed = false
 
     public override init() {
-        // macOS 26: FIRST created = RIGHTMOST
         toggleItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         toggleItem.autosaveName = "DropbarToggle5"
 
-        // SECOND created = to the LEFT. Visible so user can CMD+drag it.
         separatorItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         separatorItem.autosaveName = "DropbarSep5"
 
         super.init()
-        setupToggleItem()
-        setupSeparatorItem()
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            self?.logPositions("INIT")
+        if let b = toggleItem.button {
+            b.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "Dropbar")
+            b.target = self
+            b.action = #selector(toggleClicked(_:))
+            b.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
-    }
-
-    private func setupToggleItem() {
-        guard let button = toggleItem.button else { return }
-        button.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "Dropbar")
-        button.target = self
-        button.action = #selector(toggleClicked(_:))
-        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-    }
-
-    private func setupSeparatorItem() {
-        guard let button = separatorItem.button else { return }
-        button.title = "│"
-        button.target = self
-        button.action = #selector(separatorClicked(_:))
-    }
-
-    @objc private func separatorClicked(_ sender: NSStatusBarButton) {
-        // Clicking the separator also toggles the dropdown
-        toggleDropdown()
-    }
-
-    private func logPositions(_ context: String) {
-        let sepX = separatorItem.button?.window?.frame.origin.x ?? -1
-        let togX = toggleItem.button?.window?.frame.origin.x ?? -1
-        let sepLen = separatorItem.length
-        print("[Dropbar] [\(context)] sep: x=\(sepX) len=\(sepLen) | toggle: x=\(togX)")
+        separatorItem.button?.title = "│"
     }
 
     @objc private func toggleClicked(_ sender: NSStatusBarButton) {
@@ -61,11 +34,11 @@ public class StatusBarController: NSObject {
         if event.type == .rightMouseUp {
             showContextMenu()
         } else {
-            toggleDropdown()
+            toggle()
         }
     }
 
-    private func toggleDropdown() {
+    private func toggle() {
         if Date().timeIntervalSince(lastCloseTime) < 0.3 { return }
 
         if let panel, panel.isVisible {
@@ -73,119 +46,62 @@ public class StatusBarController: NSObject {
             return
         }
 
-        print("[Dropbar] --- TOGGLE ---")
-
-        // If collapsed, expand separator to reveal items for scanning
+        // Expand to scan, then collapse and show panel
         if isCollapsed {
             separatorItem.length = NSStatusItem.variableLength
             separatorItem.button?.title = "│"
             isCollapsed = false
-            print("[Dropbar] expanded separator")
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             guard let self else { return }
-
             let sepX = self.separatorItem.button?.window?.frame.origin.x ?? 0
             let items = self.scanner.scanAndCapture()
 
-            // Items to the LEFT of the separator = will be hidden
-            let leftItems = items.filter { $0.frame.maxX <= sepX }
-            let rightItems = items.filter { $0.frame.origin.x >= sepX }
-
-            print("[Dropbar] sepX=\(sepX) total=\(items.count) left=\(leftItems.count) right=\(rightItems.count)")
-
-            // Cache images
+            let hidden = items.filter { $0.frame.maxX <= sepX }
             for item in items {
-                if let image = item.image { self.imageCache[item.id] = image }
+                if let img = item.image { self.imageCache[item.id] = img }
             }
 
-            // Hidden = items left of separator. Only show those in the dropdown.
-            self.viewModel.hiddenIDs = Set(leftItems.map(\.id))
-            self.viewModel.items = leftItems.map { item in
-                var copy = item
-                if copy.image == nil, let cached = self.imageCache[item.id] {
-                    copy.image = cached
-                }
-                return copy
+            self.viewModel.hiddenIDs = Set(hidden.map(\.id))
+            self.viewModel.items = hidden.map { item in
+                var c = item
+                if c.image == nil { c.image = self.imageCache[item.id] }
+                return c
             }
+
+            // Collapse
+            self.separatorItem.length = 10_000
+            self.separatorItem.button?.title = ""
+            self.isCollapsed = true
 
             self.showPanel()
         }
     }
 
-    // MARK: - Collapse / Expand
-
-    private func collapse() {
-        // Save toggle position BEFORE expansion pushes it
-        let savedToggleFrame = toggleItem.button?.window?.frame
-        let savedToggleAutosave = toggleItem.autosaveName as String
-
-        print("[Dropbar] COLLAPSING separator")
-        separatorItem.length = 10_000
-        separatorItem.button?.title = ""
-        isCollapsed = true
-
-        // Restore toggle if it was pushed off-screen
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            if let saved = savedToggleFrame,
-               let current = self.toggleItem.button?.window?.frame,
-               current.origin.x != saved.origin.x {
-                print("[Dropbar] toggle moved from x=\(saved.origin.x) to x=\(current.origin.x) — restoring")
-                self.toggleItem.button?.window?.setFrame(saved, display: true)
-            }
-            // Preserve autosave position so macOS remembers
-            let posKey = "NSStatusItem Preferred Position \(savedToggleAutosave)"
-            if let x = savedToggleFrame?.origin.x {
-                UserDefaults.standard.set(CGFloat(x), forKey: posKey)
-            }
-            self.logPositions("AFTER_COLLAPSE")
-        }
-    }
-
-    private func expand() {
-        separatorItem.length = NSStatusItem.variableLength
-        separatorItem.button?.title = "│"
-        isCollapsed = false
-    }
-
-    // MARK: - Panel
-
     private func showPanel() {
-        guard let buttonWindow = toggleItem.button?.window else { return }
-
+        guard let bw = toggleItem.button?.window else { return }
         let panel = DropbarPanel()
         panel.onClose = { [weak self] in
-            guard let self else { return }
-            self.lastCloseTime = Date()
-            self.panel = nil
-            // Hide items left of separator when panel closes
-            if !self.viewModel.hiddenIDs.isEmpty {
-                self.collapse()
-            }
+            self?.lastCloseTime = Date()
+            self?.panel = nil
         }
-
         let content = DropbarContentView(
             viewModel: viewModel,
             onItemClicked: { [weak self] item in self?.handleItemClick(item) }
         )
-        panel.show(anchoredBelow: buttonWindow, content: content)
+        panel.show(anchoredBelow: bw, content: content)
         self.panel = panel
     }
 
-    // MARK: - Click-through
-
     private func handleItemClick(_ item: MenuBarItem) {
         panel?.dismiss()
+        separatorItem.length = NSStatusItem.variableLength
+        separatorItem.button?.title = "│"
+        isCollapsed = false
 
-        if viewModel.hiddenIDs.contains(item.id) {
-            expand()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                self?.clickMenuItem(item)
-            }
-        } else {
-            clickMenuItem(item)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            self?.clickMenuItem(item)
         }
     }
 
@@ -193,68 +109,56 @@ public class StatusBarController: NSObject {
         guard let source = CGEventSource(stateID: .hidSystemState) else { return }
 
         let permitAll: CGEventFilterMask = [.permitLocalMouseEvents, .permitLocalKeyboardEvents, .permitSystemDefinedEvents]
-        if let suppression = CGEventSource(stateID: .combinedSessionState) {
-            suppression.setLocalEventsFilterDuringSuppressionState(
-                permitAll, state: .eventSuppressionStateRemoteMouseDrag
-            )
-            suppression.setLocalEventsFilterDuringSuppressionState(
-                permitAll, state: .eventSuppressionStateSuppressionInterval
-            )
-            suppression.localEventsSuppressionInterval = 0
+        if let s = CGEventSource(stateID: .combinedSessionState) {
+            s.setLocalEventsFilterDuringSuppressionState(permitAll, state: .eventSuppressionStateRemoteMouseDrag)
+            s.setLocalEventsFilterDuringSuppressionState(permitAll, state: .eventSuppressionStateSuppressionInterval)
+            s.localEventsSuppressionInterval = 0
         }
 
         let frame = scanner.currentFrame(for: item.id) ?? item.frame
-        let clickPoint = CGPoint(x: frame.midX, y: frame.midY)
+        let pt = CGPoint(x: frame.midX, y: frame.midY)
 
-        guard let mouseDown = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: clickPoint, mouseButton: .left),
-              let mouseUp = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: clickPoint, mouseButton: .left)
+        guard let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: pt, mouseButton: .left),
+              let up = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: pt, mouseButton: .left)
         else { return }
 
-        let pid = Int64(item.ownerPID)
-        let windowID = Int64(item.id)
-
-        for event in [mouseDown, mouseUp] {
-            event.setIntegerValueField(.eventTargetUnixProcessID, value: pid)
-            event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: windowID)
-            event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: windowID)
-            event.setIntegerValueField(.mouseEventClickState, value: 1)
-            if let wIDField = CGEventField(rawValue: 0x33) {
-                event.setIntegerValueField(wIDField, value: windowID)
-            }
+        let pid = Int64(item.ownerPID), wid = Int64(item.id)
+        for e in [down, up] {
+            e.setIntegerValueField(.eventTargetUnixProcessID, value: pid)
+            e.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: wid)
+            e.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: wid)
+            e.setIntegerValueField(.mouseEventClickState, value: 1)
+            if let f = CGEventField(rawValue: 0x33) { e.setIntegerValueField(f, value: wid) }
         }
 
-        let savedCursor = CGEvent(source: nil)?.location ?? .zero
+        let cur = CGEvent(source: nil)?.location ?? .zero
         CGDisplayHideCursor(CGMainDisplayID())
-
-        mouseDown.post(tap: .cgSessionEventTap)
-        mouseUp.post(tap: .cgSessionEventTap)
-
-        CGWarpMouseCursorPosition(savedCursor)
+        down.post(tap: .cgSessionEventTap)
+        up.post(tap: .cgSessionEventTap)
+        CGWarpMouseCursorPosition(cur)
         CGDisplayShowCursor(CGMainDisplayID())
     }
-
-    // MARK: - Context Menu
 
     private func showContextMenu() {
         let menu = NSMenu()
         if isCollapsed {
-            menu.addItem(NSMenuItem(title: "Show All", action: #selector(showAllItems), keyEquivalent: ""))
+            menu.addItem(NSMenuItem(title: "Show All", action: #selector(showAll), keyEquivalent: ""))
         }
-        menu.addItem(NSMenuItem(title: "Quit Dropbar", action: #selector(quit), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
         toggleItem.menu = menu
         toggleItem.button?.performClick(nil)
-        DispatchQueue.main.async { [weak self] in
-            self?.toggleItem.menu = nil
-        }
+        DispatchQueue.main.async { [weak self] in self?.toggleItem.menu = nil }
     }
 
-    @objc private func showAllItems() {
+    @objc private func showAll() {
+        separatorItem.length = NSStatusItem.variableLength
+        separatorItem.button?.title = "│"
+        isCollapsed = false
         viewModel.hiddenIDs.removeAll()
-        expand()
     }
 
     @objc private func quit() {
-        expand()
+        separatorItem.length = NSStatusItem.variableLength
         NSApp.terminate(nil)
     }
 }
